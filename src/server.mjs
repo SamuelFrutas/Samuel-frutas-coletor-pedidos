@@ -62,9 +62,6 @@ function isArchived(chat) {
   return chat?.archived === true || chat?.archived === 1
 }
 
-function isKnownUnarchived(chat) {
-  return chat?.archived === false || chat?.archived === 0
-}
 
 function publicChat(chat) {
   return {
@@ -175,7 +172,7 @@ app.get('/api/whatsapp/qr', async (_req, res) => {
 
 app.get('/api/status', (_req, res) => {
   const all = [...chats.values()]
-  const active = all.filter(chat => isKnownUnarchived(chat))
+  const active = all.filter(chat => !isArchived(chat))
   const archived = all.filter(chat => isArchived(chat))
   res.json({
     connection,
@@ -203,7 +200,7 @@ app.get('/api/chats/all', (_req, res) => {
 app.get('/api/chats/:jid/messages', (req, res) => {
   const chat = chats.get(req.params.jid)
   if (!chat) return res.status(404).json({ error: 'Chat não encontrado.' })
-  if (!isKnownUnarchived(chat)) return res.status(403).json({ error: 'Estado de arquivamento não confirmado pelo WhatsApp.' })
+  if (isArchived(chat)) return res.status(403).json({ error: 'Chat arquivado. Esta etapa lê somente conversas desarquivadas.' })
   const messages = (messagesByChat.get(req.params.jid) || []).map(message => ({
     id: message.key?.id || null,
     fromMe: Boolean(message.key?.fromMe),
@@ -223,8 +220,7 @@ app.get('/api/chats/stats', (_req, res) => {
   const all = [...chats.values()]
   const active = all.filter(chat => isKnownUnarchived(chat))
   const archived = all.filter(chat => isArchived(chat))
-  const unknown = all.filter(chat => !isKnownUnarchived(chat) && !isArchived(chat))
-  res.json({ total: all.length, active: active.length, archived: archived.length, unknown: unknown.length, capturedAt: new Date().toISOString() })
+  res.json({ total: all.length, active: active.length, archived: archived.length, capturedAt: new Date().toISOString() })
 })
 
 app.get('/health', (_req, res) => {
