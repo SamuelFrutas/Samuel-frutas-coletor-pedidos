@@ -376,6 +376,47 @@ app.get('/api/chats/:jid/messages', (req, res) => {
 })
 
 
+app.get('/api/pedidos/contexto', (_req, res) => {
+  // O pedido normalmente está nas mensagens mais recentes.
+  // Enviamos somente as 10 últimas mensagens de cada conversa desarquivada.
+  const active = canonicalChats()
+    .filter(chat => !isArchived(chat))
+    .sort((a, b) => Number(b.conversationTimestamp || 0) - Number(a.conversationTimestamp || 0))
+
+  const conversas = active.map(chat => {
+    const jid = canonicalJid(chat.id)
+    const todas = messagesByChat.get(jid) || []
+    const mensagens = todas
+      .slice(-10)
+      .map(message => ({
+        id: message.key?.id || null,
+        fromMe: Boolean(message.key?.fromMe),
+        sender: message.pushName || message.key?.participant || message.key?.remoteJid || null,
+        timestamp: message.messageTimestamp || null,
+        text: message.message?.conversation
+          || message.message?.extendedTextMessage?.text
+          || message.message?.imageMessage?.caption
+          || message.message?.videoMessage?.caption
+          || message.message?.documentMessage?.caption
+          || null
+      }))
+
+    return {
+      jid,
+      nomeWhatsApp: chat.name || chat.pushName || chat.notify || null,
+      arquivada: false,
+      mensagensContexto: mensagens,
+      quantidadeContexto: mensagens.length
+    }
+  })
+
+  res.json({
+    regra: 'somente conversas desarquivadas; somente as 10 mensagens mais recentes por conversa',
+    totalConversas: conversas.length,
+    conversas
+  })
+})
+
 app.get('/api/pedidos/coleta', (_req, res) => {
   // Esta etapa trabalha EXCLUSIVAMENTE com conversas desarquivadas.
   // Nenhuma conversa arquivada entra na coleta.
