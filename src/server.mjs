@@ -8,6 +8,7 @@ import makeWASocket, {
 import P from 'pino'
 import { Boom } from '@hapi/boom'
 import qrcode from 'qrcode-terminal'
+import QRCode from 'qrcode'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -21,6 +22,8 @@ let sock = null
 let connection = 'close'
 let latestQr = null
 let reconnecting = false
+let connectionError = null
+let lastConnectedAt = null
 
 function upsertChats(items = []) {
   for (const chat of items) {
@@ -74,6 +77,7 @@ async function startWhatsApp() {
 
     sock.ev.on('connection.update', ({ connection: nextConnection, lastDisconnect, qr }) => {
       connection = nextConnection
+      if (lastDisconnect?.error) connectionError = lastDisconnect.error?.message || String(lastDisconnect.error)
       if (qr) {
         latestQr = qr
         console.log('\n=== QR CODE — TESTE COLETOR DE PEDIDOS ===')
@@ -82,6 +86,8 @@ async function startWhatsApp() {
       }
       if (nextConnection === 'open') {
         latestQr = null
+        connectionError = null
+        lastConnectedAt = new Date().toISOString()
         console.log('WhatsApp conectado.')
       }
       if (nextConnection === 'close') {
@@ -114,6 +120,22 @@ async function startWhatsApp() {
 }
 
 app.use(express.static(path.join(__dirname, '..', 'public')))
+
+app.get('/api/whatsapp/status', (_req, res) => {
+  res.json({
+    connection,
+    connected: connection === 'open',
+    qrPending: Boolean(latestQr),
+    lastConnectedAt,
+    error: connectionError
+  })
+})
+
+app.get('/api/whatsapp/qr', async (_req, res) => {
+  if (!latestQr) return res.status(404).json({ qrPending: false, message: 'QR não disponível.' })
+  const dataUrl = await QRCode.toDataURL(latestQr, { margin: 2, width: 320 })
+  res.json({ qrPending: true, dataUrl })
+})
 
 app.get('/api/status', (_req, res) => {
   const all = [...chats.values()]
