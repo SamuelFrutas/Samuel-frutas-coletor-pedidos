@@ -18,6 +18,8 @@ const port = Number(process.env.PORT || 3000)
 const logger = P({ level: process.env.LOG_LEVEL || 'info' })
 
 const chats = new Map()
+const messagesByChat = new Map()
+const MAX_MESSAGES_PER_CHAT = 100
 let sock = null
 let connection = 'close'
 let latestQr = null
@@ -38,6 +40,19 @@ function updateChats(items = []) {
     if (!update?.id) continue
     const previous = chats.get(update.id) || { id: update.id }
     chats.set(update.id, { ...previous, ...update })
+  }
+}
+
+function upsertMessages(items = []) {
+  for (const message of items) {
+    const key = message?.key?.remoteJid
+    if (!key || !message?.key?.id) continue
+    const list = messagesByChat.get(key) || []
+    const exists = list.some(item => item.key?.id === message.key.id)
+    if (exists) continue
+    list.push(message)
+    list.sort((a, b) => Number(a.messageTimestamp || 0) - Number(b.messageTimestamp || 0))
+    messagesByChat.set(key, list.slice(-MAX_MESSAGES_PER_CHAT))
   }
 }
 
@@ -108,16 +123,25 @@ async function startWhatsApp() {
       }
     })
 
-    sock.ev.on('messaging-history.set', ({ chats: historyChats }) => {
+    sock.ev.on('messaging-history.set', ({ chats: historyChats, messages: historyMessages }) => {
       upsertChats(historyChats)
-      logger.info({ count: historyChats?.length || 0 }, 'histórico de chats recebido')
+      upsertMessages(historyMessages)
+      logger.info({
+        chats: historyChats?.length || 0,
+        messages: historyMessages?.length || 0
+      }, 'histórico recebido')
+    })
+
+    sock.ev.on('messages.upsert', ({ messages }) => {
+      upsertMessages(messages)
+      logger.info({ count: messages?.length || 0 }, 'mensagens recebidas')
     })
 
     sock.ev.on('chats.upsert', upsertChats)
     sock.ev.on('chats.update', updateChats)
     sock.ev.on('chats.delete', ids => ids.forEach(id => chats.delete(id)))
 
-    logger.info('etapa 3 iniciada: aguardando captura de conversas')
+    logger.info('etapa 4 iniciada: aguardando captura de mensagens')
   } finally {
     reconnecting = false
   }
@@ -166,6 +190,25 @@ app.get('/api/chats/all', (_req, res) => {
   const all = [...chats.values()]
     .sort((a, b) => Number(isArchived(a)) - Number(isArchived(b)))
   res.json(all.map(publicChat))
+})
+
+app.get('/api/chats/:jid/messages', (req, res) => {
+  const chat = chats.get(req.params.jid)
+  if (!chat) return res.status(404).json({ error: 'Chat não encontrado.' })
+  if (isArchived(chat)) return res.status(403).json({ error: 'Chat arquivado. Esta etapa lê somente conversas desarquivadas.' })
+  const messages = (messagesByChat.get(req.params.jid) || []).map(message => ({
+    id: message.key?.id || null,
+    fromMe: Boolean(message.key?.fromMe),
+    sender: message.pushName || message.key?.participant || message.key?.remoteJid || null,
+    timestamp: message.messageTimestamp || null,
+    text: message.message?.conversation
+      || message.message?.extendedTextMessage?.text
+      || message.message?.imageMessage?.caption
+      || message.message?.videoMessage?.caption
+      || message.message?.documentMessage?.caption
+      || null
+  }))
+  res.json({ jid: req.params.jid, count: messages.length, messages })
 })
 
 app.get('/api/chats/stats', (_req, res) => {
