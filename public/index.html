@@ -79,7 +79,7 @@ function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&l
   box.innerHTML=data.resultados.length
     ? data.resultados.map((x,i)=>{
         const itens=x.pedido.map(p=>'<li>'+esc(p.quantidade)+' '+esc(p.unidade||'unidade não informada')+' — '+esc(p.produto)+'</li>').join('')
-        return '<div style="margin:10px 0;padding:10px;background:#181818;border-radius:8px"><b>'+(i+1)+'. '+esc(x.nomeWhatsApp||'Nome não identificado')+'</b><br><span class="muted">'+esc(x.jid)+'</span><br>Identificação: <b>'+esc(x.identificacaoStatus)+'</b><br>Pedido: <b>'+esc(x.pedidoStatus)+'</b><ul>'+ (itens||'<li>Nenhum item identificado com segurança.</li>') +'</ul><span class="muted">Cadastro/endereço ainda não consultados nesta etapa. Nada é enviado.</span></div>'
+        return '<div style="margin:10px 0;padding:10px;background:#181818;border-radius:8px"><b>'+(i+1)+'. '+esc(x.nomeWhatsApp||'Nome não identificado')+'</b><br><span class="muted">'+esc(x.jid)+'</span><br>Identificação: <b>'+esc(x.identificacaoStatus)+'</b><br>Pedido: <b>'+esc(x.pedidoStatus)+'</b><ul>'+ (itens||'<li>Nenhum item identificado com segurança.</li>') +'</ul><span class="muted">Identificação usa o nome exato disponível no WhatsApp; endereço oficial só será confirmado quando houver uma base de clientes conectada. Nada é enviado.</span></div>'
       }).join('')
     : 'Nenhuma conversa desarquivada para interpretar.'
 }
