@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Teste — Conversas ativas</title>
+<style>
+body{font-family:Arial,sans-serif;background:#111;color:#eee;margin:0;padding:24px}
+main{max-width:800px;margin:auto}
+button{padding:12px 16px;border:0;border-radius:8px;cursor:pointer}
+.card{background:#1d1d1d;border:1px solid #333;border-radius:12px;padding:16px;margin:10px 0}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin:20px 0}
+.stat{background:#1d1d1d;border:1px solid #333;border-radius:10px;padding:14px;min-width:130px}
+.muted{color:#aaa}
+</style>
+</head>
+<body>
+<main>
+<h1>Teste 1 — Conversas desarquivadas</h1>
+<p class="muted">Este protótipo existe somente para validar se o WhatsApp/Baileys consegue separar arquivadas e desarquivadas.</p>
+<button onclick="refresh()">Atualizar</button>
+<div id="stats" class="stats"></div>
+<h2>Conversas ativas</h2>
+<div id="list">Carregando...</div>
+<script>
+async function refresh(){
+  const [s,c]=await Promise.all([fetch('/api/status').then(r=>r.json()),fetch('/api/chats').then(r=>r.json())])
+  document.getElementById('stats').innerHTML =
+    '<div class="stat">Conexão<br><b>'+s.connection+'</b></div>'+
+    '<div class="stat">Total<br><b>'+s.totalChats+'</b></div>'+
+    '<div class="stat">Desarquivadas<br><b>'+s.activeChats+'</b></div>'+
+    '<div class="stat">Arquivadas<br><b>'+s.archivedChats+'</b></div>'
+  document.getElementById('list').innerHTML=c.length
+    ? c.map((x,i)=>'<div class="card"><b>'+(i+1)+'. '+esc(x.name)+'</b><br><span class="muted">'+esc(x.id)+'</span><br>Estado: <b>DESARQUIVADA</b></div>').join('')
+    : '<p>Nenhuma conversa desarquivada recebida ainda.</p>'
+}
+function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+refresh()
+setInterval(refresh,5000)
+</script>
+</main>
+</body>
+</html>
