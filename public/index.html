@@ -16,8 +16,8 @@ button{padding:12px 16px;border:0;border-radius:8px;cursor:pointer}
 </head>
 <body>
 <main>
-<h1>Teste 1 — Conversas desarquivadas</h1>
-<p class="muted">Este protótipo existe somente para validar se o WhatsApp/Baileys consegue separar arquivadas e desarquivadas.</p>
+<h1>Etapa 3 — Captura de conversas</h1>
+<p class="muted">Esta etapa valida a captura dos chats pelo Baileys, identificando nome, JID e estado da conversa. A separação entre arquivadas e desarquivadas continua visível para conferência.</p>
 <button onclick="refresh()">Atualizar</button><div id="wa" class="card" style="margin-top:16px">Verificando WhatsApp...</div>
 <div id="stats" class="stats"></div>
 <h2>Conversas ativas</h2>
@@ -39,7 +39,7 @@ async function refresh(){
     '<div class="stat">Desarquivadas<br><b>'+s.activeChats+'</b></div>'+
     '<div class="stat">Arquivadas<br><b>'+s.archivedChats+'</b></div>'
   document.getElementById('list').innerHTML=c.length
-    ? c.map((x,i)=>'<div class="card"><b>'+(i+1)+'. '+esc(x.name)+'</b><br><span class="muted">'+esc(x.id)+'</span><br>Estado: <b>DESARQUIVADA</b></div>').join('')
+    ? c.map((x,i)=>'<div class="card"><b>'+(i+1)+'. '+esc(x.name)+'</b><br><span class="muted">'+esc(x.jid)+'</span><br>Não lidas: <b>'+x.unreadCount+'</b><br>Estado: <b>DESARQUIVADA</b></div>').join('')
     : '<p>Nenhuma conversa desarquivada recebida ainda.</p>'
 }
 function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
