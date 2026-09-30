@@ -20,6 +20,7 @@ const logger = P({ level: process.env.LOG_LEVEL || 'info' })
 const chats = new Map()
 const messagesByChat = new Map()
 const lidToPn = new Map()
+const contactNames = new Map()
 const MAX_MESSAGES_PER_CHAT = 100
 let sock = null
 let connection = 'close'
@@ -59,6 +60,20 @@ function upsertMessages(items = []) {
 
 function isArchived(chat) {
   return chat?.archived === true || chat?.archived === 1
+}
+
+function rememberContactName(contact = {}) {
+  const name = String(contact?.name || '').trim()
+  if (!name) return
+  for (const id of [contact?.id, contact?.phoneNumber, contact?.lid].filter(Boolean)) {
+    contactNames.set(id, name)
+    contactNames.set(canonicalJid(id), name)
+  }
+}
+
+function chatDisplayName(chat) {
+  const saved = contactNames.get(chat?.id) || contactNames.get(canonicalJid(chat?.id))
+  return saved || chat?.name || chat?.pushName || chat?.notify || chat?.verifiedName || chat?.username || chat?.id || null
 }
 
 function mergeChatIdentity(lid, pn) {
@@ -136,7 +151,7 @@ function canonicalChats() {
 function publicChat(chat) {
   return {
     id: chat.id,
-    name: chat.name || chat.pushName || chat.notify || chat.id,
+    name: chatDisplayName(chat),
     jid: chat.id,
     archived: isArchived(chat),
     unreadCount: chat.unreadCount || 0,
@@ -226,6 +241,7 @@ async function startWhatsApp() {
         applyHistoryMappings(lidPnMappings)
 
         for (const contact of historyContacts || []) {
+          rememberContactName(contact)
           if (contact?.lid && contact?.id?.endsWith('@s.whatsapp.net')) {
             mergeChatIdentity(contact.lid, contact.id)
           }
@@ -284,6 +300,7 @@ async function startWhatsApp() {
 
       if (events['contacts.upsert']) {
         for (const contact of events['contacts.upsert']) {
+          rememberContactName(contact)
           if (contact?.lid && contact?.id?.endsWith('@s.whatsapp.net')) {
             mergeChatIdentity(contact.lid, contact.id)
           }
@@ -403,7 +420,7 @@ app.get('/api/pedidos/contexto', (_req, res) => {
 
     return {
       jid,
-      nomeWhatsApp: chat.name || chat.pushName || chat.notify || null,
+      nomeWhatsApp: chatDisplayName(chat),
       arquivada: false,
       mensagensContexto: mensagens,
       quantidadeContexto: mensagens.length
@@ -564,7 +581,7 @@ function interpretConversation(chat, messages) {
   const textMessages = messages.filter(message => message.text)
   const customerMessages = textMessages.filter(message => !message.fromMe)
   const order = extractOrderFromMessages(messages)
-  const identity = chat.name || chat.pushName || chat.notify || null
+  const identity = chatDisplayName(chat)
   const identityReference = extractIdentityReference(identity)
 
   return {
