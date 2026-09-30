@@ -234,7 +234,7 @@ async function startWhatsApp() {
         // Only the latest bootstrap establishes the current chat list.
         // Older RECENT/FULL/ON_DEMAND history is message backfill, not
         // permission to add dozens of old chats to the current inbox.
-        if (isLatest) {
+        if (isLatest || (chats.size === 0 && syncType === 0 && historyChats?.length)) {
           upsertChats(historyChats)
         }
 
