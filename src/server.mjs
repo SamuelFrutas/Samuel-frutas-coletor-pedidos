@@ -92,9 +92,7 @@ async function startWhatsApp() {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, logger)
       },
-      shouldSyncHistoryMessage: () => true,
-      syncFullHistory: true,
-      fireInitQueries: true
+      shouldSyncHistoryMessage: () => true
     })
 
     sock.ev.on('creds.update', saveCreds)
