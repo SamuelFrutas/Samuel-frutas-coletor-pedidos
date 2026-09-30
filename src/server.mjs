@@ -535,22 +535,50 @@ function extractOrderFromMessages(messages) {
   return candidates
 }
 
+function extractIdentityReference(identity = '') {
+  const raw = String(identity || '').trim()
+  if (!raw) return null
+
+  // Muitos contatos do Samuel Frutas usam nome + número/endereço no próprio
+  // nome do WhatsApp. Aqui apenas extraímos o que está explicitamente escrito.
+  const normalized = normalizeText(raw)
+  const refs = [...normalized.matchAll(/\\b\\d+(?:\\s*[\\/-]\\s*\\d+)+\\b/g)]
+    .map(match => match[0].replace(/\\s+/g, ''))
+  const standalone = [...normalized.matchAll(/\\b\\d{2,}\\b/g)].map(match => match[0])
+  const ids = [...new Set([...refs.flatMap(value => value.split(/[\\/-]/)), ...standalone])]
+
+  const name = raw
+    .replace(/\\b\\d+(?:\\s*[\\/-]\\s*\\d+)+\\b/g, ' ')
+    .replace(/\\b\\d{2,}\\b/g, ' ')
+    .replace(/\\s+/g, ' ')
+    .trim()
+
+  return {
+    nome: name || raw,
+    referenciaOriginal: raw,
+    identificadores: ids
+  }
+}
+
 function interpretConversation(chat, messages) {
   const textMessages = messages.filter(message => message.text)
   const customerMessages = textMessages.filter(message => !message.fromMe)
   const order = extractOrderFromMessages(messages)
-
   const identity = chat.name || chat.pushName || chat.notify || null
+  const identityReference = extractIdentityReference(identity)
 
   return {
     jid: canonicalJid(chat.id),
     nomeWhatsApp: identity,
     cadastro: null,
     enderecoCadastro: null,
-    identificacaoStatus: 'nao_consultado_cadastro',
+    referenciaWhatsApp: identityReference,
+    identificacaoStatus: identityReference
+      ? 'referencia_encontrada_no_whatsapp'
+      : 'cadastro_nao_consultado',
     pedido: order,
     pedidoStatus: order.length ? 'parcial_ou_identificado' : 'nao_identificado',
-    precisaConferencia: !order.length,
+    precisaConferencia: !order.length || !identityReference,
     contextoMensagens: textMessages.length,
     ultimaMensagemCliente: customerMessages.at(-1)?.text || null
   }
