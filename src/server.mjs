@@ -69,15 +69,11 @@ function mergeChatIdentity(lid, pn) {
   const pnChat = chats.get(pn)
 
   if (lidChat) {
-    if (!pnChat) {
-      chats.set(pn, { ...lidChat, id: pn })
-    } else {
-      chats.set(pn, {
-        ...lidChat,
-        ...pnChat,
-        id: pn
-      })
-    }
+    chats.set(pn, {
+      ...lidChat,
+      ...pnChat,
+      id: pn
+    })
     chats.delete(lid)
   }
 
@@ -123,7 +119,7 @@ function canonicalChats() {
       continue
     }
 
-    const merged = {
+    groups.set(key, {
       ...previous,
       ...chat,
       id: key,
@@ -131,15 +127,7 @@ function canonicalChats() {
         Number(previous.conversationTimestamp || 0),
         Number(chat.conversationTimestamp || 0)
       )
-    }
-
-    // Só alteramos arquivado quando pelo menos uma das entradas
-    // realmente informou esse campo.
-    if (typeof previous.archived === 'boolean' || typeof chat.archived === 'boolean') {
-      merged.archived = isArchived(chat) || isArchived(previous)
-    }
-
-    groups.set(key, merged)
+    })
   }
 
   return [...groups.values()]
@@ -163,6 +151,7 @@ function publicChat(chat) {
 async function startWhatsApp() {
   if (reconnecting) return
   reconnecting = true
+
   try {
     const { state, saveCreds } = await useMultiFileAuthState('.baileys_auth')
     const { version } = await fetchLatestBaileysVersion()
@@ -179,84 +168,125 @@ async function startWhatsApp() {
 
     sock.ev.on('creds.update', saveCreds)
 
-    sock.ev.on('connection.update', ({ connection: nextConnection, lastDisconnect, qr }) => {
-      connection = nextConnection
-      if (lastDisconnect?.error) connectionError = lastDisconnect.error?.message || String(lastDisconnect.error)
-      if (qr) {
-        latestQr = qr
-        console.log('\n=== QR CODE — TESTE COLETOR DE PEDIDOS ===')
-        qrcode.generate(qr, { small: true })
-        console.log('Abra o WhatsApp > Dispositivos conectados > Conectar dispositivo.\n')
-      }
-      if (nextConnection === 'open') {
-        latestQr = null
-        connectionError = null
-        lastConnectedAt = new Date().toISOString()
-        console.log('WhatsApp conectado.')
-      }
-      if (nextConnection === 'close') {
-        latestQr = null
-        const loggedOut = (lastDisconnect?.error instanceof Boom)
-          ? lastDisconnect.error.output?.statusCode === DisconnectReason.loggedOut
-          : false
-        if (!loggedOut) {
-          setTimeout(() => {
-            reconnecting = false
-            startWhatsApp().catch(err => logger.error(err))
-          }, 3000)
+    sock.ev.process(async events => {
+      if (events['connection.update']) {
+        const { connection: nextConnection, lastDisconnect, qr } = events['connection.update']
+
+        connection = nextConnection
+
+        if (lastDisconnect?.error) {
+          connectionError = lastDisconnect.error?.message || String(lastDisconnect.error)
         }
-      }
-    })
 
-    sock.ev.on('messaging-history.set', ({
-      chats: historyChats,
-      messages: historyMessages,
-      contacts: historyContacts,
-      lidPnMappings
-    }) => {
-      // O próprio histórico já traz o mapa LID -> número. Aplicamos esse
-      // mapa antes de contar as conversas para não criar dois registros
-      // temporários para a mesma pessoa.
-      applyHistoryMappings(lidPnMappings)
+        if (qr) {
+          latestQr = qr
+          console.log('\n=== QR CODE — TESTE COLETOR DE PEDIDOS ===')
+          qrcode.generate(qr, { small: true })
+          console.log('Abra o WhatsApp > Dispositivos conectados > Conectar dispositivo.\n')
+        }
 
-      // Alguns históricos trazem a relação pelo contato em vez do evento
-      // separado de lid-mapping.update.
-      for (const contact of historyContacts || []) {
-        if (contact?.lid && contact?.id?.endsWith('@s.whatsapp.net')) {
-          mergeChatIdentity(contact.lid, contact.id)
+        if (nextConnection === 'open') {
+          latestQr = null
+          connectionError = null
+          lastConnectedAt = new Date().toISOString()
+          console.log('WhatsApp conectado.')
+        }
+
+        if (nextConnection === 'close') {
+          latestQr = null
+
+          const loggedOut = (lastDisconnect?.error instanceof Boom)
+            ? lastDisconnect.error.output?.statusCode === DisconnectReason.loggedOut
+            : false
+
+          if (!loggedOut) {
+            setTimeout(() => {
+              reconnecting = false
+              startWhatsApp().catch(err => logger.error(err))
+            }, 3000)
+          }
         }
       }
 
-      upsertChats(historyChats)
-      upsertMessages(historyMessages)
+      // Baileys buffers history, chat upserts and chat updates together.
+      // When a history batch is present, its chats.upsert entries are the
+      // same history records. We must not treat the later FULL/RECENT
+      // history dump as a new live chat list.
+      if (events['messaging-history.set']) {
+        const {
+          chats: historyChats,
+          messages: historyMessages,
+          contacts: historyContacts,
+          lidPnMappings,
+          isLatest,
+          syncType,
+          progress
+        } = events['messaging-history.set']
 
-      logger.info({
-        chats: historyChats?.length || 0,
-        messages: historyMessages?.length || 0,
-        mappings: lidPnMappings?.length || 0,
-        contacts: historyContacts?.length || 0,
-        totalStoredChats: chats.size,
-        canonicalChats: canonicalChats().length
-      }, 'histórico recebido')
-    })
+        applyHistoryMappings(lidPnMappings)
 
-    sock.ev.on('messages.upsert', ({ messages }) => {
-      upsertMessages(messages)
-      logger.info({ count: messages?.length || 0 }, 'mensagens recebidas')
-    })
+        for (const contact of historyContacts || []) {
+          if (contact?.lid && contact?.id?.endsWith('@s.whatsapp.net')) {
+            mergeChatIdentity(contact.lid, contact.id)
+          }
+        }
 
-    sock.ev.on('chats.upsert', upsertChats)
-    sock.ev.on('chats.update', updateChats)
-    sock.ev.on('chats.delete', ids => ids.forEach(id => chats.delete(id)))
+        // Only the latest bootstrap establishes the current chat list.
+        // Older RECENT/FULL/ON_DEMAND history is message backfill, not
+        // permission to add dozens of old chats to the current inbox.
+        if (isLatest) {
+          upsertChats(historyChats)
+        }
 
-    sock.ev.on('lid-mapping.update', ({ lid, pn }) => {
-      mergeChatIdentity(lid, pn)
-    })
+        upsertMessages(historyMessages)
 
-    sock.ev.on('contacts.upsert', contacts => {
-      for (const contact of contacts || []) {
-        if (contact?.lid && contact?.id?.endsWith('@s.whatsapp.net')) {
-          mergeChatIdentity(contact.lid, contact.id)
+        logger.info({
+          chats: historyChats?.length || 0,
+          messages: historyMessages?.length || 0,
+          mappings: lidPnMappings?.length || 0,
+          contacts: historyContacts?.length || 0,
+          isLatest,
+          syncType,
+          progress,
+          storedChats: chats.size,
+          canonicalChats: canonicalChats().length
+        }, 'histórico recebido')
+      }
+
+      // If there is a history event in this buffered batch, ignore chats.upsert:
+      // event-buffer already absorbed the history chat into this upsert list.
+      if (!events['messaging-history.set'] && events['chats.upsert']) {
+        upsertChats(events['chats.upsert'])
+      }
+
+      if (events['chats.update']) {
+        updateChats(events['chats.update'])
+      }
+
+      if (events['chats.delete']) {
+        for (const id of events['chats.delete']) {
+          chats.delete(id)
+        }
+      }
+
+      if (events['messages.upsert']) {
+        upsertMessages(events['messages.upsert'].messages)
+        logger.info({
+          count: events['messages.upsert'].messages?.length || 0,
+          type: events['messages.upsert'].type
+        }, 'mensagens recebidas')
+      }
+
+      if (events['lid-mapping.update']) {
+        const { lid, pn } = events['lid-mapping.update']
+        mergeChatIdentity(lid, pn)
+      }
+
+      if (events['contacts.upsert']) {
+        for (const contact of events['contacts.upsert']) {
+          if (contact?.lid && contact?.id?.endsWith('@s.whatsapp.net')) {
+            mergeChatIdentity(contact.lid, contact.id)
+          }
         }
       }
     })
@@ -289,6 +319,7 @@ app.get('/api/status', (_req, res) => {
   const all = canonicalChats()
   const active = all.filter(chat => !isArchived(chat))
   const archived = all.filter(chat => isArchived(chat))
+
   res.json({
     connection,
     totalChats: all.length,
@@ -299,25 +330,36 @@ app.get('/api/status', (_req, res) => {
 })
 
 app.get('/api/chats', (_req, res) => {
-  const all = canonicalChats()
-  const active = all
+  const active = canonicalChats()
     .filter(chat => !isArchived(chat))
     .sort((a, b) => (b.conversationTimestamp || 0) - (a.conversationTimestamp || 0))
+
   res.json(active.map(publicChat))
 })
 
 app.get('/api/chats/all', (_req, res) => {
   const all = canonicalChats()
     .sort((a, b) => Number(isArchived(a)) - Number(isArchived(b)))
+
   res.json(all.map(publicChat))
 })
 
 app.get('/api/chats/:jid/messages', (req, res) => {
   const requestedJid = canonicalJid(req.params.jid)
   const chat = chats.get(requestedJid) || chats.get(req.params.jid)
+
   if (!chat) return res.status(404).json({ error: 'Chat não encontrado.' })
-  if (isArchived(chat)) return res.status(403).json({ error: 'Chat arquivado. Esta etapa lê somente conversas desarquivadas.' })
-  const messages = (messagesByChat.get(requestedJid) || messagesByChat.get(req.params.jid) || []).map(message => ({
+  if (isArchived(chat)) {
+    return res.status(403).json({
+      error: 'Chat arquivado. Esta etapa lê somente conversas desarquivadas.'
+    })
+  }
+
+  const messages = (
+    messagesByChat.get(requestedJid) ||
+    messagesByChat.get(req.params.jid) ||
+    []
+  ).map(message => ({
     id: message.key?.id || null,
     fromMe: Boolean(message.key?.fromMe),
     sender: message.pushName || message.key?.participant || message.key?.remoteJid || null,
@@ -329,6 +371,7 @@ app.get('/api/chats/:jid/messages', (req, res) => {
       || message.message?.documentMessage?.caption
       || null
   }))
+
   res.json({ jid: requestedJid, count: messages.length, messages })
 })
 
@@ -336,11 +379,21 @@ app.get('/api/chats/stats', (_req, res) => {
   const all = canonicalChats()
   const active = all.filter(chat => !isArchived(chat))
   const archived = all.filter(chat => isArchived(chat))
-  res.json({ total: all.length, active: active.length, archived: archived.length, capturedAt: new Date().toISOString() })
+
+  res.json({
+    total: all.length,
+    active: active.length,
+    archived: archived.length,
+    capturedAt: new Date().toISOString()
+  })
 })
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, connection, chats: chats.size })
+  res.json({
+    ok: true,
+    connection,
+    chats: canonicalChats().length
+  })
 })
 
 app.listen(port, () => {
