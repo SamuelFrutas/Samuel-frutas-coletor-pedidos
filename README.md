@@ -9,11 +9,18 @@ Projeto independente para validar duas coisas antes do sistema completo:
 1. identificar chats arquivados/desarquivados pelo Baileys;
 2. depois, em uma segunda etapa, ler as mensagens dos chats desarquivados.
 
-## Teste 1 atual
+## Etapa 3 atual
 
-O servidor mantém os chats recebidos pelo WhatsApp e expõe somente os chats com `archived !== true` em `/api/chats`.
+O servidor recebe `messaging-history.set`, `chats.upsert` e `chats.update` e mantém as conversas em memória. Cada conversa é normalizada com nome, JID, estado arquivada/desarquivada, não lidas e timestamps disponíveis.
 
-A interface mostra apenas as conversas desarquivadas.
+Endpoints principais:
+
+- `/api/chats` — conversas desarquivadas.
+- `/api/chats/all` — todas as conversas capturadas.
+- `/api/chats/stats` — quantidade total, desarquivadas e arquivadas.
+- `/api/whatsapp/status` — estado da conexão.
+
+A interface mostra as conversas desarquivadas com nome, JID e quantidade de mensagens não lidas.
 
 ## Rodar localmente
 
@@ -28,7 +35,7 @@ Abra http://localhost:3000.
 
 Na primeira execução, o QR será exibido no terminal. Conecte o WhatsApp em Dispositivos conectados.
 
-## Teste manual obrigatório
+## Teste manual obrigatório — Etapa 3
 
 1. Deixe 2 ou 3 conversas desarquivadas.
 2. Deixe outra conversa arquivada.
