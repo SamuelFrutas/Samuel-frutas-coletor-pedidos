@@ -186,7 +186,7 @@ app.get('/api/status', (_req, res) => {
 app.get('/api/chats', (_req, res) => {
   const all = [...chats.values()]
   const active = all
-    .filter(chat => isKnownUnarchived(chat))
+    .filter(chat => !isArchived(chat))
     .sort((a, b) => (b.conversationTimestamp || 0) - (a.conversationTimestamp || 0))
   res.json(active.map(publicChat))
 })
@@ -218,7 +218,7 @@ app.get('/api/chats/:jid/messages', (req, res) => {
 
 app.get('/api/chats/stats', (_req, res) => {
   const all = [...chats.values()]
-  const active = all.filter(chat => isKnownUnarchived(chat))
+  const active = all.filter(chat => !isArchived(chat))
   const archived = all.filter(chat => isArchived(chat))
   res.json({ total: all.length, active: active.length, archived: archived.length, capturedAt: new Date().toISOString() })
 })
