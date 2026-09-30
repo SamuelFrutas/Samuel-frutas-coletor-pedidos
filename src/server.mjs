@@ -488,12 +488,12 @@ const UNIT_ALIASES = {
 }
 
 function normalizeText(value = '') {
-  return String(value).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase()
+  return String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
 }
 
 function extractQuantityAndUnit(text, index) {
   const before = text.slice(Math.max(0, index - 45), index)
-  const match = before.match(/(?:^|\\s)(\\d+(?:[,.]\\d+)?)\\s*(cx|caixas?|tl|tal(?:o)?s?|un(?:idade|idades)?|sc|sacos?|dz|duzia|dúzia|bdj|bandeja|pote|gf|garrafa|pc|pacote)?\\s*$/i)
+  const match = before.match(/(?:^|\s)(\d+(?:[,.]\d+)?)\s*(cx|caixas?|tl|tal(?:o)?s?|un(?:idade|idades)?|sc|sacos?|dz|duzia|dúzia|bdj|bandeja|pote|gf|garrafa|pc|pacote)?\s*$/i)
   if (!match) return { quantity: null, unit: null }
   const quantity = Number(match[1].replace(',', '.'))
   const rawUnit = normalizeText(match[2] || '')
