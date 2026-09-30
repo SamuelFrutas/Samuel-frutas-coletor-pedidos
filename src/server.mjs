@@ -454,6 +454,138 @@ app.get('/api/pedidos/coleta', (_req, res) => {
   })
 })
 
+const ORDER_PRODUCTS = [
+  ['banana', ['banana']],
+  ['mamão papaya', ['mamão', 'mamao', 'mamão papaya', 'mamao papaya']],
+  ['tangerina', ['tangerina', 'mexerica', 'mixiriquinha']],
+  ['abacaxi', ['abacaxi']],
+  ['abacate', ['abacate']],
+  ['goiaba', ['goiaba']],
+  ['laranja pera', ['laranja pera', 'laranja']],
+  ['maçã', ['maçã', 'maca']],
+  ['manga palmer', ['manga palmer', 'manga']],
+  ['melancia', ['melancia']],
+  ['melão', ['melão', 'melao']],
+  ['morango', ['morango']],
+  ['pera macia', ['pera macia', 'pera']],
+  ['uva preta', ['uva preta']],
+  ['uva verde', ['uva verde']],
+  ['limão', ['limão', 'limao']],
+  ['caju', ['caju']],
+  ['tâmara', ['tâmara', 'tamara']],
+  ['coco', ['coco']],
+  ['garrafa', ['garrafa']],
+  ['ovos caipira', ['ovos', 'ovo', 'ovos caipira']],
+  ['mel', ['mel']]
+]
+
+const UNIT_ALIASES = {
+  cx: 'Cx', caixa: 'Cx', caixas: 'Cx',
+  tl: 'Tl', tal: 'Tl', talo: 'Tl', unidade: 'Un', unidades: 'Un',
+  un: 'Un', sc: 'Sc', saco: 'Sc', sacos: 'Sc',
+  dz: 'DZ', duzia: 'DZ', dúzia: 'DZ', bandeja: 'BDJ', bdj: 'BDJ',
+  pote: 'Pote', gf: 'Gf', garrafa: 'Gf', pc: 'Pc', pacote: 'Pc'
+}
+
+function normalizeText(value = '') {
+  return String(value).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase()
+}
+
+function extractQuantityAndUnit(text, index) {
+  const before = text.slice(Math.max(0, index - 45), index)
+  const match = before.match(/(?:^|\\s)(\\d+(?:[,.]\\d+)?)\\s*(cx|caixas?|tl|tal(?:o)?s?|un(?:idade|idades)?|sc|sacos?|dz|duzia|dúzia|bdj|bandeja|pote|gf|garrafa|pc|pacote)?\\s*$/i)
+  if (!match) return { quantity: null, unit: null }
+  const quantity = Number(match[1].replace(',', '.'))
+  const rawUnit = normalizeText(match[2] || '')
+  return { quantity, unit: UNIT_ALIASES[rawUnit] || null }
+}
+
+function extractOrderFromMessages(messages) {
+  const candidates = []
+  const seen = new Set()
+
+  for (const message of messages) {
+    if (!message.text || message.fromMe) continue
+    const original = message.text
+    const normalized = normalizeText(original)
+
+    for (const [product, aliases] of ORDER_PRODUCTS) {
+      for (const alias of aliases) {
+        const index = normalized.indexOf(normalizeText(alias))
+        if (index < 0) continue
+
+        const { quantity, unit } = extractQuantityAndUnit(normalized, index)
+        if (quantity === null) continue
+
+        const key = product + '|' + quantity + '|' + (unit || '')
+        if (seen.has(key)) continue
+        seen.add(key)
+        candidates.push({
+          produto: product,
+          quantidade: quantity,
+          unidade: unit,
+          mensagemId: message.id,
+          textoOrigem: original
+        })
+        break
+      }
+    }
+  }
+
+  return candidates
+}
+
+function interpretConversation(chat, messages) {
+  const textMessages = messages.filter(message => message.text)
+  const customerMessages = textMessages.filter(message => !message.fromMe)
+  const order = extractOrderFromMessages(messages)
+
+  const identity = chat.name || chat.pushName || chat.notify || null
+
+  return {
+    jid: canonicalJid(chat.id),
+    nomeWhatsApp: identity,
+    cadastro: null,
+    enderecoCadastro: null,
+    identificacaoStatus: 'nao_consultado_cadastro',
+    pedido: order,
+    pedidoStatus: order.length ? 'parcial_ou_identificado' : 'nao_identificado',
+    precisaConferencia: !order.length,
+    contextoMensagens: textMessages.length,
+    ultimaMensagemCliente: customerMessages.at(-1)?.text || null
+  }
+}
+
+app.get('/api/pedidos/interpretar', (_req, res) => {
+  const active = canonicalChats()
+    .filter(chat => !isArchived(chat))
+    .sort((a, b) => Number(b.conversationTimestamp || 0) - Number(a.conversationTimestamp || 0))
+
+  const resultados = active.map(chat => {
+    const jid = canonicalJid(chat.id)
+    const messages = (messagesByChat.get(jid) || []).slice(-10).map(message => ({
+      id: message.key?.id || null,
+      fromMe: Boolean(message.key?.fromMe),
+      sender: message.pushName || message.key?.participant || message.key?.remoteJid || null,
+      timestamp: message.messageTimestamp || null,
+      text: message.message?.conversation
+        || message.message?.extendedTextMessage?.text
+        || message.message?.imageMessage?.caption
+        || message.message?.videoMessage?.caption
+        || message.message?.documentMessage?.caption
+        || null
+    }))
+
+    return interpretConversation(chat, messages)
+  })
+
+  res.json({
+    regra: 'somente conversas desarquivadas; interpretação baseada nas 10 mensagens mais recentes',
+    totalConversas: resultados.length,
+    resultados
+  })
+})
+
 app.get('/api/chats/stats', (_req, res) => {
   const all = canonicalChats()
   const active = all.filter(chat => !isArchived(chat))
