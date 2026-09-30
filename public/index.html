@@ -18,12 +18,20 @@ button{padding:12px 16px;border:0;border-radius:8px;cursor:pointer}
 <main>
 <h1>Teste 1 — Conversas desarquivadas</h1>
 <p class="muted">Este protótipo existe somente para validar se o WhatsApp/Baileys consegue separar arquivadas e desarquivadas.</p>
-<button onclick="refresh()">Atualizar</button>
+<button onclick="refresh()">Atualizar</button><div id="wa" class="card" style="margin-top:16px">Verificando WhatsApp...</div>
 <div id="stats" class="stats"></div>
 <h2>Conversas ativas</h2>
 <div id="list">Carregando...</div>
 <script>
 async function refresh(){
+  const wa=await fetch('/api/whatsapp/status').then(r=>r.json())
+  const box=document.getElementById('wa')
+  if(wa.connected) box.innerHTML='<b>WhatsApp conectado</b><br><span class="muted">A sessão está ativa. Não é necessário escanear QR novamente.</span>'
+  else if(wa.qrPending) {
+    const q=await fetch('/api/whatsapp/qr').then(r=>r.json())
+    box.innerHTML='<b>WhatsApp aguardando conexão</b><br><span class="muted">Abra o WhatsApp → Dispositivos conectados → Conectar dispositivo e escaneie o QR abaixo.</span><br><img src="'+q.dataUrl+'" width="320" alt="QR Code do WhatsApp" style="margin-top:12px;background:#fff;padding:8px;border-radius:8px">'
+  } else box.innerHTML='<b>WhatsApp: '+esc(wa.connection)+'</b><br><span class="muted">Aguardando QR ou conexão.</span>'
+
   const [s,c]=await Promise.all([fetch('/api/status').then(r=>r.json()),fetch('/api/chats').then(r=>r.json())])
   document.getElementById('stats').innerHTML =
     '<div class="stat">Conexão<br><b>'+s.connection+'</b></div>'+
