@@ -39,8 +39,19 @@ async function refresh(){
     '<div class="stat">Desarquivadas<br><b>'+s.activeChats+'</b></div>'+
     '<div class="stat">Arquivadas<br><b>'+s.archivedChats+'</b></div>'
   document.getElementById('list').innerHTML=c.length
-    ? c.map((x,i)=>'<div class="card"><b>'+(i+1)+'. '+esc(x.name)+'</b><br><span class="muted">'+esc(x.jid)+'</span><br>Não lidas: <b>'+x.unreadCount+'</b><br>Estado: <b>DESARQUIVADA</b></div>').join('')
+    ? c.map((x,i)=>'<div class="card"><b>'+(i+1)+'. '+esc(x.name)+'</b><br><span class="muted">'+esc(x.jid)+'</span><br>Não lidas: <b>'+x.unreadCount+'</b><br>Estado: <b>DESARQUIVADA</b><br><button onclick="loadMessages('+JSON.stringify(x.jid)+')" style="margin-top:10px">Ver mensagens</button><div id="msg-'+esc(x.jid).replace(/[^a-zA-Z0-9]/g,'_')+'" class="muted" style="margin-top:10px"></div></div>').join('')
     : '<p>Nenhuma conversa desarquivada recebida ainda.</p>'
+}
+async function loadMessages(jid){
+  const target='msg-'+String(jid).replace(/[^a-zA-Z0-9]/g,'_')
+  const box=document.getElementById(target)
+  box.textContent='Carregando mensagens...'
+  const r=await fetch('/api/chats/'+encodeURIComponent(jid)+'/messages')
+  const data=await r.json()
+  if(!r.ok){ box.textContent=data.error||'Erro ao carregar mensagens.'; return }
+  box.innerHTML=data.messages.length
+    ? data.messages.slice(-10).map(m=>'<div style="margin:6px 0;padding:6px;background:#151515;border-radius:6px"><b>'+(m.fromMe?'Você':'Cliente')+':</b> '+esc(m.text||'[mídia]')+'</div>').join('')
+    : 'Nenhuma mensagem de texto capturada.'
 }
 function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
 refresh()
