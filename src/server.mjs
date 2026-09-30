@@ -4,7 +4,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState
-} from '@whiskeysockets/baileys'
+} from 'baileys'
 import P from 'pino'
 import { Boom } from '@hapi/boom'
 import qrcode from 'qrcode-terminal'
