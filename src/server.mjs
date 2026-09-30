@@ -58,8 +58,53 @@ function upsertMessages(items = []) {
 }
 
 function isArchived(chat) {
-  // O Baileys pode entregar o campo archived como boolean ou número.
   return chat?.archived === true || chat?.archived === 1
+}
+
+function mergeChatIdentity(lid, pn) {
+  if (!lid || !pn || lid === pn) return
+  lidToPn.set(lid, pn)
+
+  const lidChat = chats.get(lid)
+  const pnChat = chats.get(pn)
+
+  if (lidChat) {
+    if (!pnChat) {
+      chats.set(pn, { ...lidChat, id: pn })
+    } else {
+      chats.set(pn, {
+        ...lidChat,
+        ...pnChat,
+        id: pn
+      })
+    }
+    chats.delete(lid)
+  }
+
+  const lidMessages = messagesByChat.get(lid)
+  if (lidMessages?.length) {
+    const pnMessages = messagesByChat.get(pn) || []
+    const merged = new Map()
+    for (const message of [...pnMessages, ...lidMessages]) {
+      const id = message?.key?.id
+      if (id) merged.set(id, message)
+    }
+    messagesByChat.set(
+      pn,
+      [...merged.values()]
+        .sort((a, b) => Number(a.messageTimestamp || 0) - Number(b.messageTimestamp || 0))
+        .slice(-MAX_MESSAGES_PER_CHAT)
+    )
+    messagesByChat.delete(lid)
+  }
+}
+
+function applyHistoryMappings(mappings = []) {
+  for (const mapping of mappings) {
+    if (mapping?.lid && mapping?.pn) {
+      mergeChatIdentity(mapping.lid, mapping.pn)
+    }
+  }
 }
 
 function canonicalJid(jid) {
@@ -68,28 +113,35 @@ function canonicalJid(jid) {
 
 function canonicalChats() {
   const groups = new Map()
+
   for (const chat of chats.values()) {
     const key = canonicalJid(chat.id)
     const previous = groups.get(key)
+
     if (!previous) {
       groups.set(key, { ...chat, id: key })
       continue
     }
-    // Quando o mesmo contato chega como @lid e @s.whatsapp.net,
-    // preferimos a entrada PN, mas preservamos o estado conhecido.
-    const preferred = key.endsWith('@s.whatsapp.net') ? chat : previous
-    groups.set(key, {
+
+    const merged = {
       ...previous,
       ...chat,
-      ...preferred,
       id: key,
-      archived: isArchived(preferred) || isArchived(previous),
       conversationTimestamp: Math.max(
         Number(previous.conversationTimestamp || 0),
         Number(chat.conversationTimestamp || 0)
       )
-    })
+    }
+
+    // Só alteramos arquivado quando pelo menos uma das entradas
+    // realmente informou esse campo.
+    if (typeof previous.archived === 'boolean' || typeof chat.archived === 'boolean') {
+      merged.archived = isArchived(chat) || isArchived(previous)
+    }
+
+    groups.set(key, merged)
   }
+
   return [...groups.values()]
 }
 
@@ -156,12 +208,35 @@ async function startWhatsApp() {
       }
     })
 
-    sock.ev.on('messaging-history.set', ({ chats: historyChats, messages: historyMessages }) => {
+    sock.ev.on('messaging-history.set', ({
+      chats: historyChats,
+      messages: historyMessages,
+      contacts: historyContacts,
+      lidPnMappings
+    }) => {
+      // O próprio histórico já traz o mapa LID -> número. Aplicamos esse
+      // mapa antes de contar as conversas para não criar dois registros
+      // temporários para a mesma pessoa.
+      applyHistoryMappings(lidPnMappings)
+
+      // Alguns históricos trazem a relação pelo contato em vez do evento
+      // separado de lid-mapping.update.
+      for (const contact of historyContacts || []) {
+        if (contact?.lid && contact?.id?.endsWith('@s.whatsapp.net')) {
+          mergeChatIdentity(contact.lid, contact.id)
+        }
+      }
+
       upsertChats(historyChats)
       upsertMessages(historyMessages)
+
       logger.info({
         chats: historyChats?.length || 0,
-        messages: historyMessages?.length || 0
+        messages: historyMessages?.length || 0,
+        mappings: lidPnMappings?.length || 0,
+        contacts: historyContacts?.length || 0,
+        totalStoredChats: chats.size,
+        canonicalChats: canonicalChats().length
       }, 'histórico recebido')
     })
 
@@ -173,13 +248,15 @@ async function startWhatsApp() {
     sock.ev.on('chats.upsert', upsertChats)
     sock.ev.on('chats.update', updateChats)
     sock.ev.on('chats.delete', ids => ids.forEach(id => chats.delete(id)))
+
     sock.ev.on('lid-mapping.update', ({ lid, pn }) => {
-      if (lid && pn) lidToPn.set(lid, pn)
+      mergeChatIdentity(lid, pn)
     })
+
     sock.ev.on('contacts.upsert', contacts => {
       for (const contact of contacts || []) {
         if (contact?.lid && contact?.id?.endsWith('@s.whatsapp.net')) {
-          lidToPn.set(contact.lid, contact.id)
+          mergeChatIdentity(contact.lid, contact.id)
         }
       }
     })
