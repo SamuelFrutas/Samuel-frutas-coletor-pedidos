@@ -375,6 +375,44 @@ app.get('/api/chats/:jid/messages', (req, res) => {
   res.json({ jid: requestedJid, count: messages.length, messages })
 })
 
+
+app.get('/api/pedidos/coleta', (_req, res) => {
+  // Esta etapa trabalha EXCLUSIVAMENTE com conversas desarquivadas.
+  // Nenhuma conversa arquivada entra na coleta.
+  const active = canonicalChats()
+    .filter(chat => !isArchived(chat))
+    .sort((a, b) => Number(b.conversationTimestamp || 0) - Number(a.conversationTimestamp || 0))
+
+  const conversations = active.map(chat => {
+    const jid = canonicalJid(chat.id)
+    const messages = (messagesByChat.get(jid) || []).map(message => ({
+      id: message.key?.id || null,
+      fromMe: Boolean(message.key?.fromMe),
+      sender: message.pushName || message.key?.participant || message.key?.remoteJid || null,
+      timestamp: message.messageTimestamp || null,
+      text: message.message?.conversation
+        || message.message?.extendedTextMessage?.text
+        || message.message?.imageMessage?.caption
+        || message.message?.videoMessage?.caption
+        || message.message?.documentMessage?.caption
+        || null
+    }))
+
+    return {
+      jid,
+      nomeWhatsApp: chat.name || chat.pushName || chat.notify || null,
+      arquivada: false,
+      mensagensCapturadas: messages.length,
+      mensagens: messages
+    }
+  })
+
+  res.json({
+    totalConversas: conversations.length,
+    conversas: conversations
+  })
+})
+
 app.get('/api/chats/stats', (_req, res) => {
   const all = canonicalChats()
   const active = all.filter(chat => !isArchived(chat))
