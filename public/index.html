@@ -70,7 +70,19 @@ async function loadMessages(jid){
     ? data.messages.slice(-10).map(m=>'<div style="margin:6px 0;padding:6px;background:#151515;border-radius:6px"><b>'+(m.fromMe?'Você':'Cliente')+':</b> '+esc(m.text||'[mídia]')+'</div>').join('')
     : 'Nenhuma mensagem de texto capturada.'
 }
-function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}\nasync function interpretarPedidos(){
+  const box=document.getElementById('interpretados')
+  box.textContent='Interpretando somente as 10 últimas mensagens de cada conversa desarquivada...'
+  const r=await fetch('/api/pedidos/interpretar')
+  const data=await r.json()
+  if(!r.ok){ box.textContent=data.error||'Erro na interpretação.'; return }
+  box.innerHTML=data.resultados.length
+    ? data.resultados.map((x,i)=>{
+        const itens=x.pedido.map(p=>'<li>'+esc(p.quantidade)+' '+esc(p.unidade||'unidade não informada')+' — '+esc(p.produto)+'</li>').join('')
+        return '<div style="margin:10px 0;padding:10px;background:#181818;border-radius:8px"><b>'+(i+1)+'. '+esc(x.nomeWhatsApp||'Nome não identificado')+'</b><br><span class="muted">'+esc(x.jid)+'</span><br>Identificação: <b>'+esc(x.identificacaoStatus)+'</b><br>Pedido: <b>'+esc(x.pedidoStatus)+'</b><ul>'+ (itens||'<li>Nenhum item identificado com segurança.</li>') +'</ul><span class="muted">Cadastro/endereço ainda não consultados nesta etapa. Nada é enviado.</span></div>'
+      }).join('')
+    : 'Nenhuma conversa desarquivada para interpretar.'
+}
 refresh()
 setInterval(refresh,5000)
 </script>
