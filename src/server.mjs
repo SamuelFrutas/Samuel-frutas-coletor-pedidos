@@ -19,6 +19,7 @@ const logger = P({ level: process.env.LOG_LEVEL || 'info' })
 
 const chats = new Map()
 const messagesByChat = new Map()
+const lidToPn = new Map()
 const MAX_MESSAGES_PER_CHAT = 100
 let sock = null
 let connection = 'close'
@@ -58,10 +59,39 @@ function upsertMessages(items = []) {
 
 function isArchived(chat) {
   // O Baileys pode entregar o campo archived como boolean ou número.
-  // Só consideramos arquivado quando o WhatsApp informou explicitamente esse estado.
   return chat?.archived === true || chat?.archived === 1
 }
 
+function canonicalJid(jid) {
+  return lidToPn.get(jid) || jid
+}
+
+function canonicalChats() {
+  const groups = new Map()
+  for (const chat of chats.values()) {
+    const key = canonicalJid(chat.id)
+    const previous = groups.get(key)
+    if (!previous) {
+      groups.set(key, { ...chat, id: key })
+      continue
+    }
+    // Quando o mesmo contato chega como @lid e @s.whatsapp.net,
+    // preferimos a entrada PN, mas preservamos o estado conhecido.
+    const preferred = key.endsWith('@s.whatsapp.net') ? chat : previous
+    groups.set(key, {
+      ...previous,
+      ...chat,
+      ...preferred,
+      id: key,
+      archived: isArchived(preferred) || isArchived(previous),
+      conversationTimestamp: Math.max(
+        Number(previous.conversationTimestamp || 0),
+        Number(chat.conversationTimestamp || 0)
+      )
+    })
+  }
+  return [...groups.values()]
+}
 
 function publicChat(chat) {
   return {
@@ -143,6 +173,16 @@ async function startWhatsApp() {
     sock.ev.on('chats.upsert', upsertChats)
     sock.ev.on('chats.update', updateChats)
     sock.ev.on('chats.delete', ids => ids.forEach(id => chats.delete(id)))
+    sock.ev.on('lid-mapping.update', ({ lid, pn }) => {
+      if (lid && pn) lidToPn.set(lid, pn)
+    })
+    sock.ev.on('contacts.upsert', contacts => {
+      for (const contact of contacts || []) {
+        if (contact?.lid && contact?.id?.endsWith('@s.whatsapp.net')) {
+          lidToPn.set(contact.lid, contact.id)
+        }
+      }
+    })
 
     logger.info('etapa 4 iniciada: aguardando captura de mensagens')
   } finally {
@@ -169,7 +209,7 @@ app.get('/api/whatsapp/qr', async (_req, res) => {
 })
 
 app.get('/api/status', (_req, res) => {
-  const all = [...chats.values()]
+  const all = canonicalChats()
   const active = all.filter(chat => !isArchived(chat))
   const archived = all.filter(chat => isArchived(chat))
   res.json({
@@ -182,7 +222,7 @@ app.get('/api/status', (_req, res) => {
 })
 
 app.get('/api/chats', (_req, res) => {
-  const all = [...chats.values()]
+  const all = canonicalChats()
   const active = all
     .filter(chat => !isArchived(chat))
     .sort((a, b) => (b.conversationTimestamp || 0) - (a.conversationTimestamp || 0))
@@ -190,16 +230,17 @@ app.get('/api/chats', (_req, res) => {
 })
 
 app.get('/api/chats/all', (_req, res) => {
-  const all = [...chats.values()]
+  const all = canonicalChats()
     .sort((a, b) => Number(isArchived(a)) - Number(isArchived(b)))
   res.json(all.map(publicChat))
 })
 
 app.get('/api/chats/:jid/messages', (req, res) => {
-  const chat = chats.get(req.params.jid)
+  const requestedJid = canonicalJid(req.params.jid)
+  const chat = chats.get(requestedJid) || chats.get(req.params.jid)
   if (!chat) return res.status(404).json({ error: 'Chat não encontrado.' })
   if (isArchived(chat)) return res.status(403).json({ error: 'Chat arquivado. Esta etapa lê somente conversas desarquivadas.' })
-  const messages = (messagesByChat.get(req.params.jid) || []).map(message => ({
+  const messages = (messagesByChat.get(requestedJid) || messagesByChat.get(req.params.jid) || []).map(message => ({
     id: message.key?.id || null,
     fromMe: Boolean(message.key?.fromMe),
     sender: message.pushName || message.key?.participant || message.key?.remoteJid || null,
@@ -211,11 +252,11 @@ app.get('/api/chats/:jid/messages', (req, res) => {
       || message.message?.documentMessage?.caption
       || null
   }))
-  res.json({ jid: req.params.jid, count: messages.length, messages })
+  res.json({ jid: requestedJid, count: messages.length, messages })
 })
 
 app.get('/api/chats/stats', (_req, res) => {
-  const all = [...chats.values()]
+  const all = canonicalChats()
   const active = all.filter(chat => !isArchived(chat))
   const archived = all.filter(chat => isArchived(chat))
   res.json({ total: all.length, active: active.length, archived: archived.length, capturedAt: new Date().toISOString() })
