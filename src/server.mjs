@@ -542,15 +542,15 @@ function extractIdentityReference(identity = '') {
   // Muitos contatos do Samuel Frutas usam nome + número/endereço no próprio
   // nome do WhatsApp. Aqui apenas extraímos o que está explicitamente escrito.
   const normalized = normalizeText(raw)
-  const refs = [...normalized.matchAll(/\\b\\d+(?:\\s*[\\/-]\\s*\\d+)+\\b/g)]
-    .map(match => match[0].replace(/\\s+/g, ''))
-  const standalone = [...normalized.matchAll(/\\b\\d{2,}\\b/g)].map(match => match[0])
-  const ids = [...new Set([...refs.flatMap(value => value.split(/[\\/-]/)), ...standalone])]
+  const refs = [...normalized.matchAll(/\b\\d+(?:\s*[\/-]\s*\\d+)+\b/g)]
+    .map(match => match[0].replace(/\s+/g, ''))
+  const standalone = [...normalized.matchAll(/\b\\d{2,}\b/g)].map(match => match[0])
+  const ids = [...new Set([...refs.flatMap(value => value.split(/[\/-]/)), ...standalone])]
 
   const name = raw
-    .replace(/\\b\\d+(?:\\s*[\\/-]\\s*\\d+)+\\b/g, ' ')
-    .replace(/\\b\\d{2,}\\b/g, ' ')
-    .replace(/\\s+/g, ' ')
+    .replace(/\b\\d+(?:\s*[\/-]\s*\\d+)+\b/g, ' ')
+    .replace(/\b\\d{2,}\b/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim()
 
   return {
