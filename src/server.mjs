@@ -48,11 +48,15 @@ function isArchived(chat) {
 function publicChat(chat) {
   return {
     id: chat.id,
-    name: chat.name || chat.pushName || chat.id,
+    name: chat.name || chat.pushName || chat.notify || chat.id,
+    jid: chat.id,
     archived: isArchived(chat),
     unreadCount: chat.unreadCount || 0,
     conversationTimestamp: chat.conversationTimestamp || null,
-    lastMessageRecvTimestamp: chat.lastMessageRecvTimestamp || null
+    lastMessageRecvTimestamp: chat.lastMessageRecvTimestamp || null,
+    pinned: Boolean(chat.pinned),
+    muteEndTime: chat.muteEndTime || null,
+    readOnly: Boolean(chat.readOnly)
   }
 }
 
@@ -113,7 +117,7 @@ async function startWhatsApp() {
     sock.ev.on('chats.update', updateChats)
     sock.ev.on('chats.delete', ids => ids.forEach(id => chats.delete(id)))
 
-    logger.info('teste iniciado: aguardando sincronização de chats')
+    logger.info('etapa 3 iniciada: aguardando captura de conversas')
   } finally {
     reconnecting = false
   }
@@ -162,6 +166,13 @@ app.get('/api/chats/all', (_req, res) => {
   const all = [...chats.values()]
     .sort((a, b) => Number(isArchived(a)) - Number(isArchived(b)))
   res.json(all.map(publicChat))
+})
+
+app.get('/api/chats/stats', (_req, res) => {
+  const all = [...chats.values()]
+  const active = all.filter(chat => !isArchived(chat))
+  const archived = all.filter(chat => isArchived(chat))
+  res.json({ total: all.length, active: active.length, archived: archived.length, capturedAt: new Date().toISOString() })
 })
 
 app.get('/health', (_req, res) => {
