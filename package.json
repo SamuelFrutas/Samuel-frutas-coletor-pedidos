@@ -4,11 +4,9 @@
   "private": true,
   "type": "module",
   "engines": { "node": ">=20" },
-  "scripts": {
-    "start": "node src/server.mjs"
-  },
+  "scripts": { "start": "node src/server.mjs" },
   "dependencies": {
-    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "baileys": "7.0.0-rc14",
     "@hapi/boom": "^10.0.1",
     "express": "^5.1.0",
     "pino": "^9.6.0",
