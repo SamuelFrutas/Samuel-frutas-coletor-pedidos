@@ -1,5 +1,9 @@
 # Samuel Frutas — Coletor de Pedidos
 
+## Etapa 2 — Conexão do WhatsApp
+
+A segunda etapa adiciona conexão real via Baileys, QR Code exibido na interface, estado de conexão, reconexão automática e persistência local da sessão em `.baileys_auth/`.
+
 Projeto independente para validar duas coisas antes do sistema completo:
 
 1. identificar chats arquivados/desarquivados pelo Baileys;
