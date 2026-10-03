@@ -326,6 +326,20 @@ app.get('/api/whatsapp/status', (_req, res) => {
   })
 })
 
+app.post('/api/whatsapp/connect', async (_req, res) => {
+  try {
+    if (connection === 'open') {
+      return res.json({ ok: true, connected: true, message: 'WhatsApp já está conectado.' })
+    }
+    latestQr = null
+    connectionError = null
+    startWhatsApp().catch(err => logger.error(err))
+    res.json({ ok: true, connected: false, message: 'Solicitação de conexão iniciada. Aguarde o QR Code.' })
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || String(error) })
+  }
+})
+
 app.get('/api/whatsapp/qr', async (_req, res) => {
   if (!latestQr) return res.status(404).json({ qrPending: false, message: 'QR não disponível.' })
   const dataUrl = await QRCode.toDataURL(latestQr, { margin: 2, width: 320 })
