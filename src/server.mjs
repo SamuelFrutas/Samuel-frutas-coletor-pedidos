@@ -591,10 +591,41 @@ function extractIdentityReference(identity = '') {
   }
 }
 
+function extractLastOrderFromMessages(messages) {
+  const customerMessages = messages.filter(message => message?.text && !message.fromMe)
+  const selected = []
+  const seenProducts = new Set()
+  let orderStarted = false
+
+  // Começa da mensagem mais recente do cliente e volta até encontrar
+  // o início do último bloco de pedido. Mensagens antigas ficam fora.
+  for (let i = customerMessages.length - 1; i >= 0; i--) {
+    const message = customerMessages[i]
+    const items = extractOrderFromMessages([message])
+
+    if (!items.length) {
+      if (orderStarted) break
+      continue
+    }
+
+    orderStarted = true
+
+    // Se o mesmo produto apareceu mais de uma vez no último pedido,
+    // a ocorrência mais recente prevalece (útil para correções).
+    for (const item of items) {
+      if (seenProducts.has(item.produto)) continue
+      seenProducts.add(item.produto)
+      selected.push(item)
+    }
+  }
+
+  return selected.reverse()
+}
+
 function interpretConversation(chat, messages) {
   const textMessages = messages.filter(message => message.text)
   const customerMessages = textMessages.filter(message => !message.fromMe)
-  const order = extractOrderFromMessages(messages)
+  const order = extractLastOrderFromMessages(messages)
   const identity = chatDisplayName(chat)
   const identityReference = extractIdentityReference(identity)
 
@@ -608,7 +639,7 @@ function interpretConversation(chat, messages) {
       ? 'referencia_encontrada_no_whatsapp'
       : 'cadastro_nao_consultado',
     pedido: order,
-    pedidoStatus: order.length ? 'parcial_ou_identificado' : 'nao_identificado',
+    pedidoStatus: order.length ? 'identificado' : 'nao_identificado',
     precisaConferencia: !order.length || !identityReference,
     contextoMensagens: textMessages.length,
     ultimaMensagemCliente: customerMessages.at(-1)?.text || null
@@ -622,7 +653,9 @@ app.get('/api/pedidos/interpretar', (_req, res) => {
 
   const resultados = active.map(chat => {
     const jid = canonicalJid(chat.id)
-    const messages = (messagesByChat.get(jid) || []).slice(-10).map(message => ({
+    // Usamos as mensagens capturadas disponíveis para localizar o ÚLTIMO pedido.
+    // O resultado exibido ao usuário mostra somente esse pedido.
+    const messages = (messagesByChat.get(jid) || []).map(message => ({
       id: message.key?.id || null,
       fromMe: Boolean(message.key?.fromMe),
       sender: message.pushName || message.key?.participant || message.key?.remoteJid || null,
@@ -639,7 +672,7 @@ app.get('/api/pedidos/interpretar', (_req, res) => {
   })
 
   res.json({
-    regra: 'somente conversas desarquivadas; interpretação baseada nas 10 mensagens mais recentes',
+    regra: 'somente conversas desarquivadas; mostrar somente o último pedido identificado de cada pessoa',
     totalConversas: resultados.length,
     resultados
   })
