@@ -57,27 +57,39 @@ async function refresh(){
 }
 async function coletarPedidos(){
   const box=document.getElementById('coleta')
+  const button=document.querySelector('button[onclick="coletarPedidos()"]')
+  if(button) button.disabled=true
   box.textContent='Processando o último pedido de cada conversa desarquivada...'
-  const r=await fetch('/api/pedidos/interpretar',{cache:'no-store'})
-  const data=await r.json()
-  if(!r.ok){ box.textContent=data.error||'Erro ao processar os pedidos.'; return }
 
-  box.innerHTML = data.resultados.length
-    ? data.resultados.map(x=>{
-        const nome=esc(x.nomeWhatsApp||'Nome não identificado')
-        if(!x.pedido.length){
-          return '<div class="card"><b>'+nome+' não tem pedido.</b></div>'
-        }
+  try {
+    const r=await fetch('/api/pedidos/interpretar',{cache:'no-store'})
+    const data=await r.json().catch(()=>({}))
+    if(!r.ok){
+      box.textContent=data.error||'Erro ao processar os pedidos.'
+      return
+    }
 
-        const itens=x.pedido.map(p=>{
-          const quantidade=Number.isInteger(p.quantidade)?p.quantidade:String(p.quantidade).replace('.',',')
-          const unidade=esc(p.unidade||'')
-          return '<li>'+esc(quantidade)+(unidade?' '+unidade:'')+' de '+esc(p.produto)+'</li>'
+    box.innerHTML = data.resultados.length
+      ? data.resultados.map(x=>{
+          const nome=esc(x.nomeWhatsApp||'Nome não identificado')
+          if(!x.pedido.length){
+            return '<div class="card"><b>'+nome+' não tem pedido.</b></div>'
+          }
+
+          const itens=x.pedido.map(p=>{
+            const quantidade=Number.isInteger(p.quantidade)?p.quantidade:String(p.quantidade).replace('.',',')
+            const unidade=esc(p.unidade||'')
+            return '<li>'+esc(quantidade)+(unidade?' '+unidade:'')+' de '+esc(p.produto)+'</li>'
+          }).join('')
+
+          return '<div class="card"><b>'+nome+'</b><ul>'+itens+'</ul></div>'
         }).join('')
-
-        return '<div class="card"><b>'+nome+'</b><ul>'+itens+'</ul></div>'
-      }).join('')
-    : 'Nenhuma conversa desarquivada para processar.'
+      : 'Nenhuma conversa desarquivada para processar.'
+  } catch(error) {
+    box.textContent='Erro ao processar: '+(error?.message||String(error))
+  } finally {
+    if(button) button.disabled=false
+  }
 }
 async function loadMessages(jid){
   const target='msg-'+String(jid).replace(/[^a-zA-Z0-9]/g,'_')
