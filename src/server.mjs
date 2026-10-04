@@ -553,38 +553,50 @@ function extractQuantityAndUnit(text, index, alias = '') {
 function extractOrderFromMessages(messages) {
   const candidates = []
   const seen = new Set()
+  const unitPattern = '(?:cx|caixas?|tl|tal(?:o)?s?|un(?:idade|idades)?|sc|sacos?|dz|duzia|dúzia|bdj|bandeja|pote|gf|garrafa|pc|pacote)'
+  const numberPattern = '(\\d+(?:[,.]\\d+)?)'
 
   for (const message of messages) {
     if (!message?.text || message.fromMe) continue
     const original = String(message.text)
-    const parts = original.split(/\r?\n|[;|]/).map(value => value.trim()).filter(Boolean)
+    const normalized = normalizeText(original)
 
-    for (const part of parts) {
-      const normalized = normalizeText(part)
+    for (const [product, aliases] of ORDER_PRODUCTS) {
+      for (const alias of aliases.slice().sort((a, b) => b.length - a.length)) {
+        const aliasNorm = normalizeText(alias)
+        const escaped = aliasNorm.replace(/[.*+?^()|[\\]\\]/g, '\\$&')
+        // Aceita singular/plural e quantidade antes ou depois do produto.
+        const beforePattern = new RegExp('(?:^|[^\\d])' + numberPattern + '\\s*(?:x\\s*)?(' + unitPattern + ')?\\s*(?:de\\s+)?' + escaped + '(?:s|es)?(?=\\s|$|[,.;:!?-])', 'gi')
+        const afterPattern = new RegExp('(?:^|\\s|[,;:])' + escaped + '(?:s|es)?\\s*[:=-]?\\s*' + numberPattern + '\\s*(' + unitPattern + ')?\\b', 'gi')
 
-      for (const [product, aliases] of ORDER_PRODUCTS) {
-        for (const alias of aliases.slice().sort((a, b) => b.length - a.length)) {
-          const aliasNorm = normalizeText(alias)
-          const escaped = aliasNorm.replace(/[.*+?^()|[\\]\\]/g, '\\$&')
-          const match = normalized.match(new RegExp('(^|\\s|[:=-])' + escaped + '(?=\\s|$|[:=,-])', 'i'))
-          if (!match) continue
-
-          const index = match.index + match[1].length
-          const { quantity, unit } = extractQuantityAndUnit(normalized, index, alias)
-          if (quantity === null || !Number.isFinite(quantity)) continue
-
+        let match
+        while ((match = beforePattern.exec(normalized)) !== null) {
+          const quantity = Number(String(match[1]).replace(',', '.'))
+          if (!Number.isFinite(quantity)) continue
+          const rawUnit = normalizeText(match[2] || '')
+          const unit = UNIT_ALIASES[rawUnit] || null
           const key = product + '|' + quantity + '|' + (unit || '')
           if (seen.has(key)) continue
           seen.add(key)
           candidates.push({ produto: product, quantidade: quantity, unidade: unit, mensagemId: message.id, textoOrigem: original })
-          break
+        }
+
+        while ((match = afterPattern.exec(normalized)) !== null) {
+          const quantity = Number(String(match[1]).replace(',', '.'))
+          if (!Number.isFinite(quantity)) continue
+          const rawUnit = normalizeText(match[2] || '')
+          const unit = UNIT_ALIASES[rawUnit] || null
+          const key = product + '|' + quantity + '|' + (unit || '')
+          if (seen.has(key)) continue
+          seen.add(key)
+          candidates.push({ produto: product, quantidade: quantity, unidade: unit, mensagemId: message.id, textoOrigem: original })
         }
       }
     }
   }
+
   return candidates
 }
-
 function extractLastOrderFromMessages(messages) {
   const customerMessages = messages
     .filter(message => message?.text && !message.fromMe)
