@@ -33,8 +33,9 @@ async function conectarWhatsApp(){
   setTimeout(refresh,1500)
 }
 async function refresh(){
-  const wa=await fetch('/api/whatsapp/status').then(r=>r.json())
   const box=document.getElementById('wa')
+  try {
+  const wa=await fetch('/api/whatsapp/status',{cache:'no-store'}).then(r=>r.json())
   if(wa.connected) box.innerHTML='<b>WhatsApp conectado</b><br><span class="muted">A sessão está ativa. Não é necessário escanear QR novamente.</span>'
   else if(wa.qrPending) {
     const q=await fetch('/api/whatsapp/qr').then(r=>r.json())
@@ -50,6 +51,9 @@ async function refresh(){
   document.getElementById('list').innerHTML=c.length
     ? c.map((x,i)=>'<div class="card"><b>'+(i+1)+'. '+esc(x.name)+'</b><br><span class="muted">'+esc(x.jid)+'</span><br>Não lidas: <b>'+x.unreadCount+'</b><br>Estado: <b>DESARQUIVADA</b><br><button onclick="loadMessages('+JSON.stringify(x.jid)+')" style="margin-top:10px">Ver mensagens</button><div id="msg-'+esc(x.jid).replace(/[^a-zA-Z0-9]/g,'_')+'" class="muted" style="margin-top:10px"></div></div>').join('')
     : '<p>Nenhuma conversa desarquivada recebida ainda.</p>'
+  } catch (error) {
+    box.innerHTML='<b>Erro ao consultar o WhatsApp</b><br><span class="muted">'+esc(error?.message||String(error))+'</span><br><button onclick="refresh()" style="margin-top:10px">Tentar novamente</button>'
+  }
 }
 async function coletarPedidos(){
   const box=document.getElementById('coleta')
@@ -76,7 +80,8 @@ async function loadMessages(jid){
     ? data.messages.slice(-10).map(m=>'<div style="margin:6px 0;padding:6px;background:#151515;border-radius:6px"><b>'+(m.fromMe?'Você':'Cliente')+':</b> '+esc(m.text||'[mídia]')+'</div>').join('')
     : 'Nenhuma mensagem de texto capturada.'
 }
-function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}\nasync function interpretarPedidos(){
+function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+async function interpretarPedidos(){
   const box=document.getElementById('interpretados')
   box.textContent='Interpretando somente as 10 últimas mensagens de cada conversa desarquivada...'
   const r=await fetch('/api/pedidos/interpretar')
