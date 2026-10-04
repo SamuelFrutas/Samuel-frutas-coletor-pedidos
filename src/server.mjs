@@ -597,31 +597,38 @@ function extractLastOrderFromMessages(messages) {
   const customerMessages = messages
     .filter(message => message?.text && !message.fromMe)
     .sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0))
+    .slice(-10)
 
+  // O pedido pode ser dividido em várias mensagens consecutivas.
+  // Começamos pela mensagem mais recente que contém algum item e
+  // voltamos enquanto as mensagens ainda parecem fazer parte do pedido.
   const selected = []
   const seenProducts = new Set()
-  let orderStarted = false
+  let foundOrder = false
 
   for (let i = customerMessages.length - 1; i >= 0; i--) {
-    const items = extractOrderFromMessages([customerMessages[i]])
+    const message = customerMessages[i]
+    const items = extractOrderFromMessages([message])
 
-    if (!items.length) {
-      if (orderStarted) break
+    if (items.length) {
+      foundOrder = true
+      for (const item of items) {
+        if (!seenProducts.has(item.produto)) {
+          seenProducts.add(item.produto)
+          selected.push(item)
+        }
+      }
       continue
     }
 
-    orderStarted = true
-
-    for (const item of items) {
-      if (seenProducts.has(item.produto)) continue
-      seenProducts.add(item.produto)
-      selected.push(item)
-    }
+    // Antes de encontrar o primeiro item, mensagens sem produto são
+    // apenas contexto. Depois que o pedido começou, uma mensagem sem
+    // item encerra o bloco para não misturar um pedido anterior.
+    if (foundOrder) break
   }
 
   return selected.reverse()
 }
-
 function extractIdentityReference(identity = '') {
   const raw = String(identity || '').trim()
   if (!raw) return null
@@ -673,26 +680,27 @@ app.get('/api/pedidos/interpretar', (_req, res) => {
 
   const resultados = active.map(chat => {
     const jid = canonicalJid(chat.id)
-    // Usamos as mensagens capturadas disponíveis para localizar o ÚLTIMO pedido.
-    // O resultado exibido ao usuário mostra somente esse pedido.
-    const messages = (messagesByChat.get(jid) || []).map(message => ({
-      id: message.key?.id || null,
-      fromMe: Boolean(message.key?.fromMe),
-      sender: message.pushName || message.key?.participant || message.key?.remoteJid || null,
-      timestamp: message.messageTimestamp || null,
-      text: message.message?.conversation
-        || message.message?.extendedTextMessage?.text
-        || message.message?.imageMessage?.caption
-        || message.message?.videoMessage?.caption
-        || message.message?.documentMessage?.caption
-        || null
-    }))
+    const messages = (messagesByChat.get(jid) || [])
+      .sort((a, b) => Number(a.messageTimestamp || 0) - Number(b.messageTimestamp || 0))
+      .slice(-10)
+      .map(message => ({
+        id: message.key?.id || null,
+        fromMe: Boolean(message.key?.fromMe),
+        sender: message.pushName || message.key?.participant || message.key?.remoteJid || null,
+        timestamp: message.messageTimestamp || null,
+        text: message.message?.conversation
+          || message.message?.extendedTextMessage?.text
+          || message.message?.imageMessage?.caption
+          || message.message?.videoMessage?.caption
+          || message.message?.documentMessage?.caption
+          || null
+      }))
 
     return interpretConversation(chat, messages)
   })
 
   res.json({
-    regra: 'somente conversas desarquivadas; mostrar somente o último pedido identificado de cada pessoa',
+    regra: 'somente conversas desarquivadas; somente as 10 mensagens mais recentes; mostrar somente o último pedido identificado',
     totalConversas: resultados.length,
     resultados
   })
