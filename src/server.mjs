@@ -531,296 +531,21 @@ function extractQuantityAndUnit(text, index, alias = '') {
   const unitPattern = '(?:cx|caixas?|tl|tal(?:o)?s?|un(?:idade|idades)?|sc|sacos?|dz|duzia|dúzia|bdj|bandeja|pote|gf|garrafa|pc|pacote)'
   const numberPattern = '(\\d+(?:[,.]\\d+)?)'
 
-  // Formatos: "2 cx banana", "2 banana", "2x banana"
-  const beforeMatch = before.match(new RegExp('(?:^|\\s)' + numberPattern + '\\s*(?:x\\s*)?' + unitPattern + '?\\s*function extractIdentityReference(identity = '') {
-  const raw = String(identity || '').trim()
-  if (!raw) return null
-
-  const normalized = normalizeText(raw)
-  const refs = [...normalized.matchAll(/\\b\\d+(?:\\s*[\\/-]\\s*\\d+)+\\b/g)]
-    .map(match => match[0].replace(/\\s+/g, ''))
-  const standalone = [...normalized.matchAll(/\\b\\d{2,}\\b/g)]
-    .map(match => match[0])
-
-  const identificadores = [...new Set([
-    ...refs.flatMap(value => value.split(/[\\/-]/)),
-    ...standalone
-  ])]
-
-  const nome = raw
-    .replace(/\\b\\d+(?:\\s*[\\/-]\\s*\\d+)+\\b/g, ' ')
-    .replace(/\\b\\d{2,}\\b/g, ' ')
-    .replace(/\\s+/g, ' ')
-    .trim()
-
-  return {
-    nome: nome || raw,
-    referenciaOriginal: raw,
-    identificadores
-  }
-}
-
-function interpretConversation(chat, messages) {
-  const textMessages = messages.filter(message => message.text)
-  const customerMessages = textMessages.filter(message => !message.fromMe)
-  const order = extractLastOrderFromMessages(messages)
-  const identity = chatDisplayName(chat)
-  const identityReference = extractIdentityReference(identity)
-
-  return {
-    jid: canonicalJid(chat.id),
-    nomeWhatsApp: identity,
-    cadastro: null,
-    enderecoCadastro: null,
-    referenciaWhatsApp: identityReference,
-    identificacaoStatus: identityReference
-      ? 'referencia_encontrada_no_whatsapp'
-      : 'cadastro_nao_consultado',
-    pedido: order,
-    pedidoStatus: order.length ? 'identificado' : 'nao_identificado',
-    precisaConferencia: !order.length || !identityReference,
-    contextoMensagens: textMessages.length,
-    ultimaMensagemCliente: customerMessages.at(-1)?.text || null
-  }
-}
-
-app.get('/api/pedidos/interpretar', (_req, res) => {
-  const active = canonicalChats()
-    .filter(chat => !isArchived(chat))
-    .sort((a, b) => Number(b.conversationTimestamp || 0) - Number(a.conversationTimestamp || 0))
-
-  const resultados = active.map(chat => {
-    const jid = canonicalJid(chat.id)
-    // Usamos as mensagens capturadas disponíveis para localizar o ÚLTIMO pedido.
-    // O resultado exibido ao usuário mostra somente esse pedido.
-    const messages = (messagesByChat.get(jid) || []).map(message => ({
-      id: message.key?.id || null,
-      fromMe: Boolean(message.key?.fromMe),
-      sender: message.pushName || message.key?.participant || message.key?.remoteJid || null,
-      timestamp: message.messageTimestamp || null,
-      text: message.message?.conversation
-        || message.message?.extendedTextMessage?.text
-        || message.message?.imageMessage?.caption
-        || message.message?.videoMessage?.caption
-        || message.message?.documentMessage?.caption
-        || null
-    }))
-
-    return interpretConversation(chat, messages)
-  })
-
-  res.json({
-    regra: 'somente conversas desarquivadas; mostrar somente o último pedido identificado de cada pessoa',
-    totalConversas: resultados.length,
-    resultados
-  })
-})
-
-app.get('/api/chats/stats', (_req, res) => {
-  const all = canonicalChats()
-  const active = all.filter(chat => !isArchived(chat))
-  const archived = all.filter(chat => isArchived(chat))
-
-  res.json({
-    total: all.length,
-    active: active.length,
-    archived: archived.length,
-    capturedAt: new Date().toISOString()
-  })
-})
-
-app.get('/health', (_req, res) => {
-  res.json({
-    ok: true,
-    connection,
-    chats: canonicalChats().length
-  })
-})
-
-app.listen(port, () => {
-  console.log(`Teste disponível em http://localhost:${port}`)
-  startWhatsApp().catch(err => logger.error(err))
-})
-, 'i'))
-  if (beforeMatch) {
-    const quantity = Number(beforeMatch[1].replace(',', '.'))
-    const unitMatch = before.match(new RegExp(numberPattern + '\\s*(?:x\\s*)?(' + unitPattern + ')?\\s*function interpretConversation(chat, messages) {
-  const textMessages = messages.filter(message => message.text)
-  const customerMessages = textMessages.filter(message => !message.fromMe)
-  const order = extractLastOrderFromMessages(messages)
-  const identity = chatDisplayName(chat)
-  const identityReference = extractIdentityReference(identity)
-
-  return {
-    jid: canonicalJid(chat.id),
-    nomeWhatsApp: identity,
-    cadastro: null,
-    enderecoCadastro: null,
-    referenciaWhatsApp: identityReference,
-    identificacaoStatus: identityReference
-      ? 'referencia_encontrada_no_whatsapp'
-      : 'cadastro_nao_consultado',
-    pedido: order,
-    pedidoStatus: order.length ? 'identificado' : 'nao_identificado',
-    precisaConferencia: !order.length || !identityReference,
-    contextoMensagens: textMessages.length,
-    ultimaMensagemCliente: customerMessages.at(-1)?.text || null
-  }
-}
-
-app.get('/api/pedidos/interpretar', (_req, res) => {
-  const active = canonicalChats()
-    .filter(chat => !isArchived(chat))
-    .sort((a, b) => Number(b.conversationTimestamp || 0) - Number(a.conversationTimestamp || 0))
-
-  const resultados = active.map(chat => {
-    const jid = canonicalJid(chat.id)
-    // Usamos as mensagens capturadas disponíveis para localizar o ÚLTIMO pedido.
-    // O resultado exibido ao usuário mostra somente esse pedido.
-    const messages = (messagesByChat.get(jid) || []).map(message => ({
-      id: message.key?.id || null,
-      fromMe: Boolean(message.key?.fromMe),
-      sender: message.pushName || message.key?.participant || message.key?.remoteJid || null,
-      timestamp: message.messageTimestamp || null,
-      text: message.message?.conversation
-        || message.message?.extendedTextMessage?.text
-        || message.message?.imageMessage?.caption
-        || message.message?.videoMessage?.caption
-        || message.message?.documentMessage?.caption
-        || null
-    }))
-
-    return interpretConversation(chat, messages)
-  })
-
-  res.json({
-    regra: 'somente conversas desarquivadas; mostrar somente o último pedido identificado de cada pessoa',
-    totalConversas: resultados.length,
-    resultados
-  })
-})
-
-app.get('/api/chats/stats', (_req, res) => {
-  const all = canonicalChats()
-  const active = all.filter(chat => !isArchived(chat))
-  const archived = all.filter(chat => isArchived(chat))
-
-  res.json({
-    total: all.length,
-    active: active.length,
-    archived: archived.length,
-    capturedAt: new Date().toISOString()
-  })
-})
-
-app.get('/health', (_req, res) => {
-  res.json({
-    ok: true,
-    connection,
-    chats: canonicalChats().length
-  })
-})
-
-app.listen(port, () => {
-  console.log(`Teste disponível em http://localhost:${port}`)
-  startWhatsApp().catch(err => logger.error(err))
-})
-, 'i'))
-    const rawUnit = normalizeText(unitMatch?.[1] || '')
+  const beforeWithUnit = before.match(new RegExp('(?:^|\\s)' + numberPattern + '\\s*(?:x\\s*)?(' + unitPattern + ')?\\s*$', 'i'))
+  if (beforeWithUnit) {
+    const quantity = Number(beforeWithUnit[1].replace(',', '.'))
+    const rawUnit = normalizeText(beforeWithUnit[2] || '')
     return { quantity, unit: UNIT_ALIASES[rawUnit] || null }
   }
 
-  // Formatos: "banana 2 cx", "banana: 2", "banana 2"
-  const afterMatch = after.match(new RegExp('^\\s*[:=-]?\\s*' + numberPattern + '\\s*(' + unitPattern + ')?\\b', 'i'))
-  if (afterMatch) {
-    const quantity = Number(afterMatch[1].replace(',', '.'))
-    const rawUnit = normalizeText(afterMatch[2] || '')
+  const afterWithUnit = after.match(new RegExp('^\\s*[:=-]?\\s*' + numberPattern + '\\s*(' + unitPattern + ')?\\b', 'i'))
+  if (afterWithUnit) {
+    const quantity = Number(afterWithUnit[1].replace(',', '.'))
+    const rawUnit = normalizeText(afterWithUnit[2] || '')
     return { quantity, unit: UNIT_ALIASES[rawUnit] || null }
   }
 
-  // Formato comum sem unidade, quando a quantidade está imediatamente antes do produto.
-  const beforeSimple = before.match(new RegExp('(?:^|\\s)' + numberPattern + '\\s*function interpretConversation(chat, messages) {
-  const textMessages = messages.filter(message => message.text)
-  const customerMessages = textMessages.filter(message => !message.fromMe)
-  const order = extractLastOrderFromMessages(messages)
-  const identity = chatDisplayName(chat)
-  const identityReference = extractIdentityReference(identity)
-
-  return {
-    jid: canonicalJid(chat.id),
-    nomeWhatsApp: identity,
-    cadastro: null,
-    enderecoCadastro: null,
-    referenciaWhatsApp: identityReference,
-    identificacaoStatus: identityReference
-      ? 'referencia_encontrada_no_whatsapp'
-      : 'cadastro_nao_consultado',
-    pedido: order,
-    pedidoStatus: order.length ? 'identificado' : 'nao_identificado',
-    precisaConferencia: !order.length || !identityReference,
-    contextoMensagens: textMessages.length,
-    ultimaMensagemCliente: customerMessages.at(-1)?.text || null
-  }
-}
-
-app.get('/api/pedidos/interpretar', (_req, res) => {
-  const active = canonicalChats()
-    .filter(chat => !isArchived(chat))
-    .sort((a, b) => Number(b.conversationTimestamp || 0) - Number(a.conversationTimestamp || 0))
-
-  const resultados = active.map(chat => {
-    const jid = canonicalJid(chat.id)
-    // Usamos as mensagens capturadas disponíveis para localizar o ÚLTIMO pedido.
-    // O resultado exibido ao usuário mostra somente esse pedido.
-    const messages = (messagesByChat.get(jid) || []).map(message => ({
-      id: message.key?.id || null,
-      fromMe: Boolean(message.key?.fromMe),
-      sender: message.pushName || message.key?.participant || message.key?.remoteJid || null,
-      timestamp: message.messageTimestamp || null,
-      text: message.message?.conversation
-        || message.message?.extendedTextMessage?.text
-        || message.message?.imageMessage?.caption
-        || message.message?.videoMessage?.caption
-        || message.message?.documentMessage?.caption
-        || null
-    }))
-
-    return interpretConversation(chat, messages)
-  })
-
-  res.json({
-    regra: 'somente conversas desarquivadas; mostrar somente o último pedido identificado de cada pessoa',
-    totalConversas: resultados.length,
-    resultados
-  })
-})
-
-app.get('/api/chats/stats', (_req, res) => {
-  const all = canonicalChats()
-  const active = all.filter(chat => !isArchived(chat))
-  const archived = all.filter(chat => isArchived(chat))
-
-  res.json({
-    total: all.length,
-    active: active.length,
-    archived: archived.length,
-    capturedAt: new Date().toISOString()
-  })
-})
-
-app.get('/health', (_req, res) => {
-  res.json({
-    ok: true,
-    connection,
-    chats: canonicalChats().length
-  })
-})
-
-app.listen(port, () => {
-  console.log(`Teste disponível em http://localhost:${port}`)
-  startWhatsApp().catch(err => logger.error(err))
-})
-, 'i'))
+  const beforeSimple = before.match(new RegExp('(?:^|\\s)' + numberPattern + '\\s*$', 'i'))
   if (beforeSimple) {
     return { quantity: Number(beforeSimple[1].replace(',', '.')), unit: null }
   }
@@ -865,9 +590,6 @@ function extractOrderFromMessages(messages) {
 }
 
 function extractLastOrderFromMessages(messages) {
-  // A memória de cada conversa guarda até 100 mensagens. Procuramos o último
-  // bloco de mensagens do cliente que contém itens, sem limitar artificialmente
-  // às 10 últimas mensagens.
   const customerMessages = messages
     .filter(message => message?.text && !message.fromMe)
 
@@ -894,6 +616,26 @@ function extractLastOrderFromMessages(messages) {
   }
 
   return selected.reverse()
+}
+
+function extractIdentityReference(identity = '') {
+  const raw = String(identity || '').trim()
+  if (!raw) return null
+  const normalized = normalizeText(raw)
+  const refs = [...normalized.matchAll(/\b\d+(?:\s*[\/-]\s*\d+)+\b/g)]
+    .map(match => match[0].replace(/\s+/g, ''))
+  const standalone = [...normalized.matchAll(/\b\d{2,}\b/g)]
+    .map(match => match[0])
+  const identificadores = [...new Set([
+    ...refs.flatMap(value => value.split(/[\/-]/)),
+    ...standalone
+  ])]
+  const nome = raw
+    .replace(/\b\d+(?:\s*[\/-]\s*\d+)+\b/g, ' ')
+    .replace(/\b\d{2,}\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return { nome: nome || raw, referenciaOriginal: raw, identificadores }
 }
 
 function interpretConversation(chat, messages) {
