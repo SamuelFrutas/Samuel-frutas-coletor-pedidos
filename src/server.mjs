@@ -531,24 +531,21 @@ function extractQuantityAndUnit(text, index, alias = '') {
   const unitPattern = '(?:cx|caixas?|tl|tal(?:o)?s?|un(?:idade|idades)?|sc|sacos?|dz|duzia|dúzia|bdj|bandeja|pote|gf|garrafa|pc|pacote)'
   const numberPattern = '(\\d+(?:[,.]\\d+)?)'
 
-  const beforeWithUnit = before.match(new RegExp('(?:^|\\s)' + numberPattern + '\\s*(?:x\\s*)?(' + unitPattern + ')?\\s*$', 'i'))
-  if (beforeWithUnit) {
-    const quantity = Number(beforeWithUnit[1].replace(',', '.'))
-    const rawUnit = normalizeText(beforeWithUnit[2] || '')
+  const read = match => {
+    if (!match) return null
+    const quantity = Number(String(match[1]).replace(',', '.'))
+    if (!Number.isFinite(quantity)) return null
+    const rawUnit = normalizeText(match[2] || '')
     return { quantity, unit: UNIT_ALIASES[rawUnit] || null }
   }
 
-  const afterWithUnit = after.match(new RegExp('^\\s*[:=-]?\\s*' + numberPattern + '\\s*(' + unitPattern + ')?\\b', 'i'))
-  if (afterWithUnit) {
-    const quantity = Number(afterWithUnit[1].replace(',', '.'))
-    const rawUnit = normalizeText(afterWithUnit[2] || '')
-    return { quantity, unit: UNIT_ALIASES[rawUnit] || null }
-  }
+  const beforeMatch = before.match(new RegExp('(?:^|\\s)' + numberPattern + '\\s*(?:x\\s*)?(' + unitPattern + ')?\\s*$', 'i'))
+  const beforeValue = read(beforeMatch)
+  if (beforeValue) return beforeValue
 
-  const beforeSimple = before.match(new RegExp('(?:^|\\s)' + numberPattern + '\\s*$', 'i'))
-  if (beforeSimple) {
-    return { quantity: Number(beforeSimple[1].replace(',', '.')), unit: null }
-  }
+  const afterMatch = after.match(new RegExp('^\\s*[:=-]?\\s*' + numberPattern + '\\s*(' + unitPattern + ')?\\b', 'i'))
+  const afterValue = read(afterMatch)
+  if (afterValue) return afterValue
 
   return { quantity: null, unit: null }
 }
@@ -560,39 +557,38 @@ function extractOrderFromMessages(messages) {
   for (const message of messages) {
     if (!message?.text || message.fromMe) continue
     const original = String(message.text)
-    const normalized = normalizeText(original)
+    const parts = original.split(/\r?\n|[;|]/).map(value => value.trim()).filter(Boolean)
 
-    for (const [product, aliases] of ORDER_PRODUCTS) {
-      for (const alias of aliases) {
-        const aliasNorm = normalizeText(alias)
-        const index = normalized.indexOf(aliasNorm)
-        if (index < 0) continue
+    for (const part of parts) {
+      const normalized = normalizeText(part)
 
-        const { quantity, unit } = extractQuantityAndUnit(normalized, index, alias)
-        if (quantity === null || !Number.isFinite(quantity)) continue
+      for (const [product, aliases] of ORDER_PRODUCTS) {
+        for (const alias of aliases.slice().sort((a, b) => b.length - a.length)) {
+          const aliasNorm = normalizeText(alias)
+          const escaped = aliasNorm.replace(/[.*+?^()|[\\]\\]/g, '\\$&')
+          const match = normalized.match(new RegExp('(^|\\s|[:=-])' + escaped + '(?=\\s|$|[:=,-])', 'i'))
+          if (!match) continue
 
-        const key = product + '|' + quantity + '|' + (unit || '')
-        if (seen.has(key)) continue
-        seen.add(key)
-        candidates.push({
-          produto: product,
-          quantidade: quantity,
-          unidade: unit,
-          mensagemId: message.id,
-          textoOrigem: original
-        })
-        break
+          const index = match.index + match[1].length
+          const { quantity, unit } = extractQuantityAndUnit(normalized, index, alias)
+          if (quantity === null || !Number.isFinite(quantity)) continue
+
+          const key = product + '|' + quantity + '|' + (unit || '')
+          if (seen.has(key)) continue
+          seen.add(key)
+          candidates.push({ produto: product, quantidade: quantity, unidade: unit, mensagemId: message.id, textoOrigem: original })
+          break
+        }
       }
     }
   }
-
   return candidates
 }
 
 function extractLastOrderFromMessages(messages) {
   const customerMessages = messages
     .filter(message => message?.text && !message.fromMe)
-
+    .sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0))
   const selected = []
   const seenProducts = new Set()
   let orderStarted = false
@@ -600,24 +596,19 @@ function extractLastOrderFromMessages(messages) {
   for (let i = customerMessages.length - 1; i >= 0; i--) {
     const message = customerMessages[i]
     const items = extractOrderFromMessages([message])
-
     if (!items.length) {
       if (orderStarted) break
       continue
     }
-
     orderStarted = true
-
     for (const item of items) {
       if (seenProducts.has(item.produto)) continue
       seenProducts.add(item.produto)
       selected.push(item)
     }
   }
-
   return selected.reverse()
 }
-
 function extractIdentityReference(identity = '') {
   const raw = String(identity || '').trim()
   if (!raw) return null
