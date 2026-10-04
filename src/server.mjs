@@ -731,7 +731,7 @@ app.listen(port, () => {
   }
 
   // Formatos: "banana 2 cx", "banana: 2", "banana 2"
-  const afterMatch = after.match(new RegExp('^\\s*[:=-]?\\s*' + numberPattern + '\\s*' + unitPattern + '?\\b', 'i'))
+  const afterMatch = after.match(new RegExp('^\\s*[:=-]?\\s*' + numberPattern + '\\s*(' + unitPattern + ')?\\b', 'i'))
   if (afterMatch) {
     const quantity = Number(afterMatch[1].replace(',', '.'))
     const rawUnit = normalizeText(afterMatch[2] || '')
