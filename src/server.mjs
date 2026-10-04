@@ -522,13 +522,29 @@ function normalizeText(value = '') {
   return String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
 }
 
-function extractQuantityAndUnit(text, index) {
-  const before = text.slice(Math.max(0, index - 45), index)
-  const match = before.match(/(?:^|\s)(\d+(?:[,.]\d+)?)\s*(cx|caixas?|tl|tal(?:o)?s?|un(?:idade|idades)?|sc|sacos?|dz|duzia|dúzia|bdj|bandeja|pote|gf|garrafa|pc|pacote)?\s*$/i)
-  if (!match) return { quantity: null, unit: null }
-  const quantity = Number(match[1].replace(',', '.'))
-  const rawUnit = normalizeText(match[2] || '')
-  return { quantity, unit: UNIT_ALIASES[rawUnit] || null }
+function extractQuantityAndUnit(text, index, alias = '') {
+  const normalized = normalizeText(text)
+  const aliasNorm = normalizeText(alias)
+  const before = normalized.slice(Math.max(0, index - 60), index)
+  const after = normalized.slice(index + aliasNorm.length, index + aliasNorm.length + 60)
+
+  const unitPattern = 'cx|caixas?|tl|tal(?:o)?s?|un(?:idade|idades)?|sc|sacos?|dz|duzia|dúzia|bdj|bandeja|pote|gf|garrafa|pc|pacote'
+  const numberPattern = '(\\d+(?:[,.]\\d+)?)'
+  const beforeMatch = before.match(new RegExp('(?:^|\\\\s)' + numberPattern + '\\\\s*(' + unitPattern + ')?\\\\s*$', 'i'))
+  if (beforeMatch) {
+    const quantity = Number(beforeMatch[1].replace(',', '.'))
+    const rawUnit = normalizeText(beforeMatch[2] || '')
+    return { quantity, unit: UNIT_ALIASES[rawUnit] || null }
+  }
+
+  const afterMatch = after.match(new RegExp('^\\\\s*[:=-]?\\\\s*' + numberPattern + '\\\\s*(' + unitPattern + ')?\\\\b', 'i'))
+  if (afterMatch) {
+    const quantity = Number(afterMatch[1].replace(',', '.'))
+    const rawUnit = normalizeText(afterMatch[2] || '')
+    return { quantity, unit: UNIT_ALIASES[rawUnit] || null }
+  }
+
+  return { quantity: null, unit: null }
 }
 
 function extractOrderFromMessages(messages) {
@@ -542,10 +558,11 @@ function extractOrderFromMessages(messages) {
 
     for (const [product, aliases] of ORDER_PRODUCTS) {
       for (const alias of aliases) {
-        const index = normalized.indexOf(normalizeText(alias))
+        const aliasNorm = normalizeText(alias)
+        const index = normalized.indexOf(aliasNorm)
         if (index < 0) continue
 
-        const { quantity, unit } = extractQuantityAndUnit(normalized, index)
+        const { quantity, unit } = extractQuantityAndUnit(normalized, index, alias)
         if (quantity === null) continue
 
         const key = product + '|' + quantity + '|' + (unit || '')
@@ -565,40 +582,15 @@ function extractOrderFromMessages(messages) {
 
   return candidates
 }
-
-function extractIdentityReference(identity = '') {
-  const raw = String(identity || '').trim()
-  if (!raw) return null
-
-  // Muitos contatos do Samuel Frutas usam nome + número/endereço no próprio
-  // nome do WhatsApp. Aqui apenas extraímos o que está explicitamente escrito.
-  const normalized = normalizeText(raw)
-  const refs = [...normalized.matchAll(/\b\\d+(?:\s*[\/-]\s*\\d+)+\b/g)]
-    .map(match => match[0].replace(/\s+/g, ''))
-  const standalone = [...normalized.matchAll(/\b\\d{2,}\b/g)].map(match => match[0])
-  const ids = [...new Set([...refs.flatMap(value => value.split(/[\/-]/)), ...standalone])]
-
-  const name = raw
-    .replace(/\b\\d+(?:\s*[\/-]\s*\\d+)+\b/g, ' ')
-    .replace(/\b\\d{2,}\b/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  return {
-    nome: name || raw,
-    referenciaOriginal: raw,
-    identificadores: ids
-  }
-}
-
 function extractLastOrderFromMessages(messages) {
-  const customerMessages = messages.filter(message => message?.text && !message.fromMe)
+  const customerMessages = messages
+    .filter(message => message?.text && !message.fromMe)
+    .slice(-10)
+
   const selected = []
   const seenProducts = new Set()
   let orderStarted = false
 
-  // Começa da mensagem mais recente do cliente e volta até encontrar
-  // o início do último bloco de pedido. Mensagens antigas ficam fora.
   for (let i = customerMessages.length - 1; i >= 0; i--) {
     const message = customerMessages[i]
     const items = extractOrderFromMessages([message])
@@ -610,8 +602,6 @@ function extractLastOrderFromMessages(messages) {
 
     orderStarted = true
 
-    // Se o mesmo produto apareceu mais de uma vez no último pedido,
-    // a ocorrência mais recente prevalece (útil para correções).
     for (const item of items) {
       if (seenProducts.has(item.produto)) continue
       seenProducts.add(item.produto)
