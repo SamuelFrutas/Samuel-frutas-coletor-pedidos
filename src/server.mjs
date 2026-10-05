@@ -6,7 +6,7 @@ import makeWASocket, {
   useMultiFileAuthState
 } from 'baileys'
 import P from 'pino'
-import { Boom } from '@hapi/boom
+import { Boom } from '@hapi/boom'
 import qrcode from 'qrcode-terminal'
 import QRCode from 'qrcode'
 import path from 'node:path'
@@ -29,287 +29,41 @@ let reconnecting = false
 let connectionError = null
 let lastConnectedAt = null
 
-function upsertChats(items = []) {
-  for (const chat of items) {
-    if (!chat?.id) continue
-    const previous = chats.get(chat.id) || {}
-    chats.set(chat.id, { ...previous, ...chat })
-  }
-}
+function upsertChats(items = []) { for (const chat of items) { if (!chat?.id) continue; const previous = chats.get(chat.id) || {}; chats.set(chat.id, { ...previous, ...chat }) } }
+function updateChats(items = []) { for (const update of items) { if (!update?.id) continue; const previous = chats.get(update.id) || { id: update.id }; chats.set(update.id, { ...previous, ...update }) } }
+function upsertMessages(items = []) { for (const message of items) { const key = message?.key?.remoteJid; if (!key || !message?.key?.id) continue; const list = messagesByChat.get(key) || []; if (list.some(item => item.key?.id === message.key.id)) continue; list.push(message); list.sort((a,b)=>Number(a.messageTimestamp||0)-Number(b.messageTimestamp||0)); messagesByChat.set(key,list.slice(-MAX_MESSAGES_PER_CHAT)) } }
+function isArchived(chat) { return chat?.archived === true || chat?.archived === 1 }
+function rememberContactName(contact={}) { const name=String(contact?.name||'').trim(); if(!name)return; for(const id of [contact?.id,contact?.phoneNumber,contact?.lid].filter(Boolean)){contactNames.set(id,name);contactNames.set(canonicalJid(id),name)} }
+function chatDisplayName(chat){const saved=contactNames.get(chat?.id)||contactNames.get(canonicalJid(chat?.id));return saved||chat?.name||chat?.pushName||chat?.notify||chat?.verifiedName||chat?.username||chat?.id||null}
+function mergeChatIdentity(lid,pn){if(!lid||!pn||lid===pn)return;lidToPn.set(lid,pn);const lidChat=chats.get(lid),pnChat=chats.get(pn);if(lidChat){chats.set(pn,{...lidChat,...pnChat,id:pn});chats.delete(lid)}const lidMessages=messagesByChat.get(lid);if(lidMessages?.length){const pnMessages=messagesByChat.get(pn)||[],merged=new Map();for(const message of [...pnMessages,...lidMessages]){const id=message?.key?.id;if(id)merged.set(id,message)}messagesByChat.set(pn,[...merged.values()].sort((a,b)=>Number(a.messageTimestamp||0)-Number(b.messageTimestamp||0)).slice(-MAX_MESSAGES_PER_CHAT));messagesByChat.delete(lid)}}
+function applyHistoryMappings(mappings=[]){for(const mapping of mappings){if(mapping?.lid&&mapping?.pn)mergeChatIdentity(mapping.lid,mapping.pn)}}
+function canonicalJid(jid){return lidToPn.get(jid)||jid}
+function canonicalChats(){const groups=new Map();for(const chat of chats.values()){const key=canonicalJid(chat.id),previous=groups.get(key);if(!previous){groups.set(key,{...chat,id:key});continue}groups.set(key,{...previous,...chat,id:key,conversationTimestamp:Math.max(Number(previous.conversationTimestamp||0),Number(chat.conversationTimestamp||0))})}return [...groups.values()]}
+function publicChat(chat){return{id:chat.id,name:chatDisplayName(chat),jid:chat.id,archived:isArchived(chat),unreadCount:chat.unreadCount||0,conversationTimestamp:chat.conversationTimestamp||null,lastMessageRecvTimestamp:chat.lastMessageRecvTimestamp||null,pinned:Boolean(chat.pinned),muteEndTime:chat.muteEndTime||null,readOnly:Boolean(chat.readOnly)}}
 
-function updateChats(items = []) {
-  for (const update of items) {
-    if (!update?.id) continue
-    const previous = chats.get(update.id) || { id: update.id }
-    chats.set(update.id, { ...previous, ...update })
-  }
-}
+async function startWhatsApp(){if(reconnecting)return;reconnecting=true;try{const{state,saveCreds}=await useMultiFileAuthState('.baileys_auth');const{version}=await fetchLatestBaileysVersion();sock=makeWASocket({version,logger,auth:{creds:state.creds,keys:makeCacheableSignalKeyStore(state.keys,logger)},shouldSyncHistoryMessage:()=>true});sock.ev.on('creds.update',saveCreds);sock.ev.process(async events=>{if(events['connection.update']){const{connection:nextConnection,lastDisconnect,qr}=events['connection.update'];connection=nextConnection;if(lastDisconnect?.error)connectionError=lastDisconnect.error?.message||String(lastDisconnect.error);if(qr){latestQr=qr;qrcode.generate(qr,{small:true})}if(nextConnection==='open'){latestQr=null;connectionError=null;lastConnectedAt=new Date().toISOString()}if(nextConnection==='close'){latestQr=null;const loggedOut=(lastDisconnect?.error instanceof Boom)?lastDisconnect.error.output?.statusCode===DisconnectReason.loggedOut:false;if(!loggedOut)setTimeout(()=>{reconnecting=false;startWhatsApp().catch(err=>logger.error(err))},3000)}}if(events['messaging-history.set']){const{chats:historyChats,messages:historyMessages,contacts:historyContacts,lidPnMappings,isLatest,syncType,progress}=events['messaging-history.set'];applyHistoryMappings(lidPnMappings);for(const contact of historyContacts||[]){rememberContactName(contact);if(contact?.lid&&contact?.id?.endsWith('@s.whatsapp.net'))mergeChatIdentity(contact.lid,contact.id)}if(isLatest||(chats.size===0&&syncType===0&&historyChats?.length))upsertChats(historyChats);upsertMessages(historyMessages);logger.info({chats:historyChats?.length||0,messages:historyMessages?.length||0,mappings:lidPnMappings?.length||0,contacts:historyContacts?.length||0,isLatest,syncType,progress,storedChats:chats.size,canonicalChats:canonicalChats().length},'histórico recebido')}if(!events['messaging-history.set']&&events['chats.upsert'])upsertChats(events['chats.upsert']);if(events['chats.update'])updateChats(events['chats.update']);if(events['chats.delete'])for(const id of events['chats.delete'])chats.delete(id);if(events['messages.upsert'])upsertMessages(events['messages.upsert'].messages);if(events['lid-mapping.update'])mergeChatIdentity(events['lid-mapping.update'].lid,events['lid-mapping.update'].pn);if(events['contacts.upsert'])for(const contact of events['contacts.upsert']){rememberContactName(contact);if(contact?.lid&&contact?.id?.endsWith('@s.whatsapp.net'))mergeChatIdentity(contact.lid,contact.id)}});logger.info('etapa 4 iniciada: aguardando captura de mensagens')}finally{reconnecting=false}}
+app.use(express.static(path.join(__dirname,'..','public')))
+app.get('/api/whatsapp/status',(_req,res)=>res.json({connection,connected:connection==='open',qrPending:Boolean(latestQr),lastConnectedAt,error:connectionError}))
+app.post('/api/whatsapp/connect',async(_req,res)=>{if(connection==='open')return res.json({ok:true,connected:true,message:'WhatsApp já está conectado.'});latestQr=null;connectionError=null;startWhatsApp().catch(err=>logger.error(err));res.json({ok:true,connected:false,message:'Solicitação de conexão iniciada. Aguarde o QR Code.'})})
+app.get('/api/whatsapp/qr',async(_req,res)=>{if(!latestQr)return res.status(404).json({qrPending:false,message:'QR não disponível.'});res.json({qrPending:true,dataUrl:await QRCode.toDataURL(latestQr,{margin:2,width:320})})})
+app.get('/api/status',(_req,res)=>{const all=canonicalChats(),active=all.filter(c=>!isArchived(c)),archived=all.filter(c=>isArchived(c));res.json({connection,totalChats:all.length,activeChats:active.length,archivedChats:archived.length,qrPending:Boolean(latestQr)})})
+app.get('/api/chats',(_req,res)=>res.json(canonicalChats().filter(c=>!isArchived(c)).sort((a,b)=>(b.conversationTimestamp||0)-(a.conversationTimestamp||0)).map(publicChat)))
+app.get('/api/chats/all',(_req,res)=>res.json(canonicalChats().sort((a,b)=>Number(isArchived(a))-Number(isArchived(b))).map(publicChat)))
+function toPublicMessage(message){return{id:message.key?.id||null,fromMe:Boolean(message.key?.fromMe),sender:message.pushName||message.key?.participant||message.key?.remoteJid||null,timestamp:message.messageTimestamp||null,text:message.message?.conversation||message.message?.extendedTextMessage?.text||message.message?.imageMessage?.caption||message.message?.videoMessage?.caption||message.message?.documentMessage?.caption||null}}
+app.get('/api/chats/:jid/messages',(req,res)=>{const requestedJid=canonicalJid(req.params.jid),chat=chats.get(requestedJid)||chats.get(req.params.jid);if(!chat)return res.status(404).json({error:'Chat não encontrado.'});if(isArchived(chat))return res.status(403).json({error:'Chat arquivado. Esta etapa lê somente conversas desarquivadas.'});const messages=(messagesByChat.get(requestedJid)||messagesByChat.get(req.params.jid)||[]).map(toPublicMessage);res.json({jid:requestedJid,count:messages.length,messages})})
 
-function upsertMessages(items = []) {
-  for (const message of items) {
-    const key = message?.key?.remoteJid
-    if (!key || !message?.key?.id) continue
-    const list = messagesByChat.get(key) || []
-    const exists = list.some(item => item.key?.id === message.key.id)
-    if (exists) continue
-    list.push(message)
-    list.sort((a, b) => Number(a.messageTimestamp || 0) - Number(b.messageTimestamp || 0))
-    messagesByChat.set(key, list.slice(-MAX_MESSAGES_PER_CHAT))
-  }
-}
+app.get('/api/pedidos/contexto',(_req,res)=>{const active=canonicalChats().filter(c=>!isArchived(c)).sort((a,b)=>Number(b.conversationTimestamp||0)-Number(a.conversationTimestamp||0));const conversas=active.map(chat=>{const msgs=(messagesByChat.get(canonicalJid(chat.id))||[]).sort((a,b)=>Number(a.messageTimestamp||0)-Number(b.messageTimestamp||0)).slice(-10).map(toPublicMessage);return{jid:canonicalJid(chat.id),nomeWhatsApp:chatDisplayName(chat),arquivada:false,mensagensContexto:msgs,quantidadeContexto:msgs.length}});res.json({regra:'somente conversas desarquivadas; últimas 10 mensagens da conversa inteira, incluindo cliente e empresa',totalConversas:conversas.length,conversas})})
+app.get('/api/pedidos/coleta',(_req,res)=>{const active=canonicalChats().filter(c=>!isArchived(c)).sort((a,b)=>Number(b.conversationTimestamp||0)-Number(a.conversationTimestamp||0));const conversations=active.map(chat=>{const messages=(messagesByChat.get(canonicalJid(chat.id))||[]).map(toPublicMessage);return{jid:canonicalJid(chat.id),nomeWhatsApp:chatDisplayName(chat),arquivada:false,mensagensCapturadas:messages.length,mensagens:messages}});res.json({totalConversas:conversations.length,conversas:conversations})})
 
-function isArchived(chat) {
-  return chat?.archived === true || chat?.archived === 1
-}
-
-function rememberContactName(contact = {}) {
-  const name = String(contact?.name || '').trim()
-  if (!name) return
-  for (const id of [contact?.id, contact?.phoneNumber, contact?.lid].filter(Boolean)) {
-    contactNames.set(id, name)
-    contactNames.set(canonicalJid(id), name)
-  }
-}
-
-function chatDisplayName(chat) {
-  const saved = contactNames.get(chat?.id) || contactNames.get(canonicalJid(chat?.id))
-  return saved || chat?.name || chat?.pushName || chat?.notify || chat?.verifiedName || chat?.username || chat?.id || null
-}
-
-function mergeChatIdentity(lid, pn) {
-  if (!lid || !pn || lid === pn) return
-  lidToPn.set(lid, pn)
-  const lidChat = chats.get(lid)
-  const pnChat = chats.get(pn)
-  if (lidChat) {
-    chats.set(pn, { ...lidChat, ...pnChat, id: pn })
-    chats.delete(lid)
-  }
-  const lidMessages = messagesByChat.get(lid)
-  if (lidMessages?.length) {
-    const pnMessages = messagesByChat.get(pn) || []
-    const merged = new Map()
-    for (const message of [...pnMessages, ...lidMessages]) {
-      const id = message?.key?.id
-      if (id) merged.set(id, message)
-    }
-    messagesByChat.set(pn, [...merged.values()]
-      .sort((a, b) => Number(a.messageTimestamp || 0) - Number(b.messageTimestamp || 0))
-      .slice(-MAX_MESSAGES_PER_CHAT))
-    messagesByChat.delete(lid)
-  }
-}
-
-function applyHistoryMappings(mappings = []) {
-  for (const mapping of mappings) {
-    if (mapping?.lid && mapping?.pn) mergeChatIdentity(mapping.lid, mapping.pn)
-  }
-}
-
-function canonicalJid(jid) {
-  return lidToPn.get(jid) || jid
-}
-
-function canonicalChats() {
-  const groups = new Map()
-  for (const chat of chats.values()) {
-    const key = canonicalJid(chat.id)
-    const previous = groups.get(key)
-    if (!previous) {
-      groups.set(key, { ...chat, id: key })
-      continue
-    }
-    groups.set(key, {
-      ...previous,
-      ...chat,
-      id: key,
-      conversationTimestamp: Math.max(Number(previous.conversationTimestamp || 0), Number(chat.conversationTimestamp || 0))
-    })
-  }
-  return [...groups.values()]
-}
-
-function publicChat(chat) {
-  return {
-    id: chat.id,
-    name: chatDisplayName(chat),
-    jid: chat.id,
-    archived: isArchived(chat),
-    unreadCount: chat.unreadCount || 0,
-    conversationTimestamp: chat.conversationTimestamp || null,
-    lastMessageRecvTimestamp: chat.lastMessageRecvTimestamp || null,
-    pinned: Boolean(chat.pinned),
-    muteEndTime: chat.muteEndTime || null,
-    readOnly: Boolean(chat.readOnly)
-  }
-}
-
-async function startWhatsApp() {
-  if (reconnecting) return
-  reconnecting = true
-  try {
-    const { state, saveCreds } = await useMultiFileAuthState('.baileys_auth')
-    const { version } = await fetchLatestBaileysVersion()
-    sock = makeWASocket({ version, logger, auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) }, shouldSyncHistoryMessage: () => true })
-    sock.ev.on('creds.update', saveCreds)
-    sock.ev.process(async events => {
-      if (events['connection.update']) {
-        const { connection: nextConnection, lastDisconnect, qr } = events['connection.update']
-        connection = nextConnection
-        if (lastDisconnect?.error) connectionError = lastDisconnect.error?.message || String(lastDisconnect.error)
-        if (qr) {
-          latestQr = qr
-          console.log('\n=== QR CODE — TESTE COLETOR DE PEDIDOS ===')
-          qrcode.generate(qr, { small: true })
-          console.log('Abra o WhatsApp > Dispositivos conectados > Conectar dispositivo.\n')
-        }
-        if (nextConnection === 'open') {
-          latestQr = null
-          connectionError = null
-          lastConnectedAt = new Date().toISOString()
-          console.log('WhatsApp conectado.')
-        }
-        if (nextConnection === 'close') {
-          latestQr = null
-          const loggedOut = (lastDisconnect?.error instanceof Boom) ? lastDisconnect.error.output?.statusCode === DisconnectReason.loggedOut : false
-          if (!loggedOut) setTimeout(() => { reconnecting = false; startWhatsApp().catch(err => logger.error(err)) }, 3000)
-        }
-      }
-      if (events['messaging-history.set']) {
-        const { chats: historyChats, messages: historyMessages, contacts: historyContacts, lidPnMappings, isLatest, syncType, progress } = events['messaging-history.set']
-        applyHistoryMappings(lidPnMappings)
-        for (const contact of historyContacts || []) {
-          rememberContactName(contact)
-          if (contact?.lid && contact?.id?.endsWith('@s.whatsapp.net')) mergeChatIdentity(contact.lid, contact.id)
-        }
-        if (isLatest || (chats.size === 0 && syncType === 0 && historyChats?.length)) upsertChats(historyChats)
-        upsertMessages(historyMessages)
-        logger.info({ chats: historyChats?.length || 0, messages: historyMessages?.length || 0, mappings: lidPnMappings?.length || 0, contacts: historyContacts?.length || 0, isLatest, syncType, progress, storedChats: chats.size, canonicalChats: canonicalChats().length }, 'histórico recebido')
-      }
-      if (!events['messaging-history.set'] && events['chats.upsert']) upsertChats(events['chats.upsert'])
-      if (events['chats.update']) updateChats(events['chats.update'])
-      if (events['chats.delete']) for (const id of events['chats.delete']) chats.delete(id)
-      if (events['messages.upsert']) {
-        upsertMessages(events['messages.upsert'].messages)
-        logger.info({ count: events['messages.upsert'].messages?.length || 0, type: events['messages.upsert'].type }, 'mensagens recebidas')
-      }
-      if (events['lid-mapping.update']) mergeChatIdentity(events['lid-mapping.update'].lid, events['lid-mapping.update'].pn)
-      if (events['contacts.upsert']) for (const contact of events['contacts.upsert']) {
-        rememberContactName(contact)
-        if (contact?.lid && contact?.id?.endsWith('@s.whatsapp.net')) mergeChatIdentity(contact.lid, contact.id)
-      }
-    })
-    logger.info('etapa 4 iniciada: aguardando captura de mensagens')
-  } finally {
-    reconnecting = false
-  }
-}
-
-app.use(express.static(path.join(__dirname, '..', 'public')))
-app.get('/api/whatsapp/status', (_req, res) => res.json({ connection, connected: connection === 'open', qrPending: Boolean(latestQr), lastConnectedAt, error: connectionError }))
-app.post('/api/whatsapp/connect', async (_req, res) => {
-  try {
-    if (connection === 'open') return res.json({ ok: true, connected: true, message: 'WhatsApp já está conectado.' })
-    latestQr = null; connectionError = null
-    startWhatsApp().catch(err => logger.error(err))
-    res.json({ ok: true, connected: false, message: 'Solicitação de conexão iniciada. Aguarde o QR Code.' })
-  } catch (error) { res.status(500).json({ ok: false, error: error?.message || String(error) }) }
-})
-app.get('/api/whatsapp/qr', async (_req, res) => {
-  if (!latestQr) return res.status(404).json({ qrPending: false, message: 'QR não disponível.' })
-  res.json({ qrPending: true, dataUrl: await QRCode.toDataURL(latestQr, { margin: 2, width: 320 }) })
-})
-app.get('/api/status', (_req, res) => {
-  const all = canonicalChats(); const active = all.filter(chat => !isArchived(chat)); const archived = all.filter(chat => isArchived(chat))
-  res.json({ connection, totalChats: all.length, activeChats: active.length, archivedChats: archived.length, qrPending: Boolean(latestQr) })
-})
-app.get('/api/chats', (_req, res) => res.json(canonicalChats().filter(chat => !isArchived(chat)).sort((a,b) => (b.conversationTimestamp||0)-(a.conversationTimestamp||0)).map(publicChat)))
-app.get('/api/chats/all', (_req, res) => res.json(canonicalChats().sort((a,b) => Number(isArchived(a))-Number(isArchived(b))).map(publicChat)))
-app.get('/api/chats/:jid/messages', (req, res) => {
-  const requestedJid = canonicalJid(req.params.jid); const chat = chats.get(requestedJid) || chats.get(req.params.jid)
-  if (!chat) return res.status(404).json({ error: 'Chat não encontrado.' })
-  if (isArchived(chat)) return res.status(403).json({ error: 'Chat arquivado. Esta etapa lê somente conversas desarquivadas.' })
-  const messages = (messagesByChat.get(requestedJid) || messagesByChat.get(req.params.jid) || []).map(toPublicMessage)
-  res.json({ jid: requestedJid, count: messages.length, messages })
-})
-
-function toPublicMessage(message) {
-  return {
-    id: message.key?.id || null,
-    fromMe: Boolean(message.key?.fromMe),
-    sender: message.pushName || message.key?.participant || message.key?.remoteJid || null,
-    timestamp: message.messageTimestamp || null,
-    text: message.message?.conversation || message.message?.extendedTextMessage?.text || message.message?.imageMessage?.caption || message.message?.videoMessage?.caption || message.message?.documentMessage?.caption || null
-  }
-}
-
-app.get('/api/pedidos/contexto', (_req, res) => {
-  const active = canonicalChats().filter(chat => !isArchived(chat)).sort((a,b) => Number(b.conversationTimestamp||0)-Number(a.conversationTimestamp||0))
-  const conversas = active.map(chat => ({ jid: canonicalJid(chat.id), nomeWhatsApp: chatDisplayName(chat), arquivada: false, mensagensContexto: (messagesByChat.get(canonicalJid(chat.id))||[]).sort((a,b)=>Number(a.messageTimestamp||0)-Number(b.messageTimestamp||0)).slice(-10).map(toPublicMessage), quantidadeContexto: Math.min(10,(messagesByChat.get(canonicalJid(chat.id))||[]).length) }))
-  res.json({ regra: 'somente conversas desarquivadas; últimas 10 mensagens da conversa inteira, incluindo cliente e empresa', totalConversas: conversas.length, conversas })
-})
-
-app.get('/api/pedidos/coleta', (_req, res) => {
-  const active = canonicalChats().filter(chat => !isArchived(chat)).sort((a,b)=>Number(b.conversationTimestamp||0)-Number(a.conversationTimestamp||0))
-  const conversations = active.map(chat => { const jid=canonicalJid(chat.id); const messages=(messagesByChat.get(jid)||[]).map(toPublicMessage); return { jid, nomeWhatsApp: chatDisplayName(chat), arquivada:false, mensagensCapturadas:messages.length, mensagens:messages } })
-  res.json({ totalConversas:conversations.length, conversas:conversations })
-})
-
-const ORDER_PRODUCTS = [
-  ['banana',['banana']], ['mamão papaya',['mamão','mamao','mamão papaya','mamao papaya']], ['tangerina',['tangerina','mexerica','mixiriquinha']], ['abacaxi',['abacaxi']], ['abacate',['abacate']], ['goiaba',['goiaba']], ['laranja pera',['laranja pera','laranja']], ['maçã',['maçã','maca']], ['manga palmer',['manga palmer','manga']], ['melancia',['melancia']], ['melão',['melão','melao']], ['morango',['morango']], ['pera macia',['pera macia','pera']], ['uva preta',['uva preta']], ['uva verde',['uva verde']], ['limão',['limão','limao']], ['caju',['caju']], ['tâmara',['tâmara','tamara']], ['coco',['coco']], ['garrafa',['garrafa']], ['ovos caipira',['ovos','ovo','ovos caipira']], ['mel',['mel']]
-]
-const UNIT_ALIASES = { cx:'Cx',caixa:'Cx',caixas:'Cx',tl:'Tl',tal:'Tl',talo:'Tl',unidade:'Un',unidades:'Un',un:'Un',sc:'Sc',saco:'Sc',sacos:'Sc',dz:'DZ',duzia:'DZ','dúzia':'DZ',bandeja:'BDJ',bdj:'BDJ',pote:'Pote',gf:'Gf',garrafa:'Gf',pc:'Pc',pacote:'Pc' }
-function normalizeText(value=''){ return String(value).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase() }
-function extractQuantityAndUnit(text,index,alias=''){
-  const normalized=normalizeText(text), aliasNorm=normalizeText(alias), before=normalized.slice(Math.max(0,index-60),index), after=normalized.slice(index+aliasNorm.length,index+aliasNorm.length+60)
-  const units='(cx|caixas?|tl|talo|talos|un|unidade|unidades|sc|saco|sacos|dz|duzia|bdj|bandeja|pote|gf|garrafa|pc|pacote)', number='(\\d+(?:[,.]\\d+)?)'
-  const parse=m=>{ if(!m)return null; const q=Number(String(m[1]).replace(',','.')); if(!Number.isFinite(q)||q<=0)return null; const raw=normalizeText(m[2]||''); return {quantity:q,unit:UNIT_ALIASES[raw]||null} }
-  let m=before.match(new RegExp('(?:^|[\\s,:;-])'+number+'\\s*(?:x\\s*)?'+units+'?\\s*(?:de\\s+)?$','i')); let v=parse(m); if(v)return v
-  m=after.match(new RegExp('^\\s*[:=-]?\\s*'+number+'\\s*'+units+'?(?:\\b|$)','i')); v=parse(m); if(v)return v
-  return {quantity:null,unit:null}
-}
-function extractOrderFromMessages(messages){
-  const candidates=[],seen=new Set()
-  for(const message of messages){
-    if(!message?.text||message.fromMe)continue
-    const original=String(message.text), normalized=normalizeText(original), parts=normalized.split(/\r?\n|[;,|]+/).map(v=>v.trim()).filter(Boolean)
-    for(const part of parts)for(const [product,aliases] of ORDER_PRODUCTS)for(const alias of aliases.slice().sort((a,b)=>b.length-a.length)){
-      const aliasNorm=normalizeText(alias), escaped=aliasNorm.replace(/[.*+?^()|[\]\\]/g,'\\$&'), rx=new RegExp('(?:^|[^a-z0-9])'+escaped+'(?:s|es)?(?=$|[^a-z0-9])','i'), match=rx.exec(part)
-      if(!match)continue
-      const index=match.index+match[0].indexOf(aliasNorm), value=extractQuantityAndUnit(part,index,alias)
-      if(value.quantity===null)continue
-      const key=product+'|'+value.quantity+'|'+(value.unit||''); if(seen.has(key))continue; seen.add(key)
-      candidates.push({produto:product,quantidade:value.quantity,unidade:value.unit,mensagemId:message.id,textoOrigem:original}); break
-    }
-  }
-  return candidates
-}
-function extractLastOrderFromMessages(messages){
-  const conversation=messages.filter(m=>m?.text).sort((a,b)=>Number(a.timestamp||0)-Number(b.timestamp||0)).slice(-10)
-  const customerOnly=conversation.filter(m=>!m.fromMe)
-  const selected=[],seenProducts=new Set(); let foundOrder=false
-  for(let i=customerOnly.length-1;i>=0;i--){
-    const items=extractOrderFromMessages([customerOnly[i]])
-    if(items.length){ foundOrder=true; for(const item of items)if(!seenProducts.has(item.produto)){seenProducts.add(item.produto);selected.push(item)}; continue }
-    if(foundOrder)break
-  }
-  return selected.reverse()
-}
-function extractIdentityReference(identity=''){
-  const raw=String(identity||'').trim(); if(!raw)return null; const normalized=normalizeText(raw)
-  const refs=[...normalized.matchAll(/\b\d+(?:\s*[\/-]\s*\d+)+\b/g)].map(m=>m[0].replace(/\s+/g,'')), standalone=[...normalized.matchAll(/\b\d{2,}\b/g)].map(m=>m[0])
-  const identificadores=[...new Set([...refs.flatMap(v=>v.split(/[\/-]/)),...standalone])], nome=raw.replace(/\b\d+(?:\s*[\/-]\s*\d+)+\b/g,' ').replace(/\b\d{2,}\b/g,' ').replace(/\s+/g,' ').trim()
-  return {nome:nome||raw,referenciaOriginal:raw,identificadores}
-}
-function interpretConversation(chat,messages){
-  const textMessages=messages.filter(m=>m.text), customerMessages=textMessages.filter(m=>!m.fromMe), order=extractLastOrderFromMessages(messages), identity=chatDisplayName(chat), identityReference=extractIdentityReference(identity)
-  return {jid:canonicalJid(chat.id),nomeWhatsApp:identity,cadastro:null,enderecoCadastro:null,referenciaWhatsApp:identityReference,identificacaoStatus:identityReference?'referencia_encontrada_no_whatsapp':'cadastro_nao_consultado',pedido:order,pedidoStatus:order.length?'identificado':'nao_identificado',precisaConferencia:!order.length||!identityReference,contextoMensagens:textMessages.length,ultimaMensagemCliente:customerMessages.at(-1)?.text||null}
-}
-app.get('/api/pedidos/interpretar',(_req,res)=>{
-  const active=canonicalChats().filter(chat=>!isArchived(chat)).sort((a,b)=>Number(b.conversationTimestamp||0)-Number(a.conversationTimestamp||0))
-  const resultados=active.map(chat=>{ const jid=canonicalJid(chat.id); const messages=(messagesByChat.get(jid)||[]).sort((a,b)=>Number(a.messageTimestamp||0)-Number(b.messageTimestamp||0)).slice(-10).map(toPublicMessage); return interpretConversation(chat,messages) })
-  res.json({regra:'somente conversas desarquivadas; últimas 10 mensagens da conversa inteira, incluindo cliente e empresa; o parser usa apenas as mensagens do cliente para identificar os itens',totalConversas:resultados.length,resultados})
-})
-app.get('/api/chats/stats',(_req,res)=>{ const all=canonicalChats(),active=all.filter(c=>!isArchived(c)),archived=all.filter(c=>isArchived(c)); res.json({total:all.length,active:active.length,archived:archived.length,capturedAt:new Date().toISOString()}) })
+const ORDER_PRODUCTS=[['banana',['banana']],['mamão papaya',['mamão','mamao','mamão papaya','mamao papaya']],['tangerina',['tangerina','mexerica','mixiriquinha']],['abacaxi',['abacaxi']],['abacate',['abacate']],['goiaba',['goiaba']],['laranja pera',['laranja pera','laranja']],['maçã',['maçã','maca']],['manga palmer',['manga palmer','manga']],['melancia',['melancia']],['melão',['melão','melao']],['morango',['morango']],['pera macia',['pera macia','pera']],['uva preta',['uva preta']],['uva verde',['uva verde']],['limão',['limão','limao']],['caju',['caju']],['tâmara',['tâmara','tamara']],['coco',['coco']],['garrafa',['garrafa']],['ovos caipira',['ovos','ovo','ovos caipira']],['mel',['mel']]]
+const UNIT_ALIASES={cx:'Cx',caixa:'Cx',caixas:'Cx',tl:'Tl',tal:'Tl',talo:'Tl',unidade:'Un',unidades:'Un',un:'Un',sc:'Sc',saco:'Sc',sacos:'Sc',dz:'DZ',duzia:'DZ','dúzia':'DZ',bandeja:'BDJ',bdj:'BDJ',pote:'Pote',gf:'Gf',garrafa:'Gf',pc:'Pc',pacote:'Pc'}
+function normalizeText(value=''){return String(value).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()}
+function extractQuantityAndUnit(text,index,alias=''){const normalized=normalizeText(text),aliasNorm=normalizeText(alias),before=normalized.slice(Math.max(0,index-60),index),after=normalized.slice(index+aliasNorm.length,index+aliasNorm.length+60),units='(cx|caixas?|tl|talo|talos|un|unidade|unidades|sc|saco|sacos|dz|duzia|bdj|bandeja|pote|gf|garrafa|pc|pacote)',number='(\\d+(?:[,.]\\d+)?)',parse=m=>{if(!m)return null;const q=Number(String(m[1]).replace(',','.'));if(!Number.isFinite(q)||q<=0)return null;const raw=normalizeText(m[2]||'');return{quantity:q,unit:UNIT_ALIASES[raw]||null}};let m=before.match(new RegExp('(?:^|[\\s,:;-])'+number+'\\s*(?:x\\s*)?'+units+'?\\s*(?:de\\s+)?$','i'));let v=parse(m);if(v)return v;m=after.match(new RegExp('^\\s*[:=-]?\\s*'+number+'\\s*'+units+'?(?:\\b|$)','i'));v=parse(m);if(v)return v;return{quantity:null,unit:null}}
+function extractOrderFromMessages(messages){const candidates=[],seen=new Set();for(const message of messages){if(!message?.text||message.fromMe)continue;const original=String(message.text),normalized=normalizeText(original),parts=normalized.split(/\r?\n|[;,|]+/).map(v=>v.trim()).filter(Boolean);for(const part of parts)for(const[product,aliases]of ORDER_PRODUCTS)for(const alias of aliases.slice().sort((a,b)=>b.length-a.length)){const aliasNorm=normalizeText(alias),escaped=aliasNorm.replace(/[.*+?^()|[\]\\]/g,'\\$&'),rx=new RegExp('(?:^|[^a-z0-9])'+escaped+'(?:s|es)?(?=$|[^a-z0-9])','i'),match=rx.exec(part);if(!match)continue;const index=match.index+match[0].indexOf(aliasNorm),value=extractQuantityAndUnit(part,index,alias);if(value.quantity===null)continue;const key=product+'|'+value.quantity+'|'+(value.unit||'');if(seen.has(key))continue;seen.add(key);candidates.push({produto:product,quantidade:value.quantity,unidade:value.unit,mensagemId:message.id,textoOrigem:original});break}}return candidates}
+function extractLastOrderFromMessages(messages){const conversation=messages.filter(m=>m?.text).sort((a,b)=>Number(a.timestamp||0)-Number(b.timestamp||0)).slice(-10);const customerOnly=conversation.filter(m=>!m.fromMe);const selected=[],seenProducts=new Set();let foundOrder=false;for(let i=customerOnly.length-1;i>=0;i--){const items=extractOrderFromMessages([customerOnly[i]]);if(items.length){foundOrder=true;for(const item of items)if(!seenProducts.has(item.produto)){seenProducts.add(item.produto);selected.push(item)}continue}if(foundOrder)break}return selected.reverse()}
+function extractIdentityReference(identity=''){const raw=String(identity||'').trim();if(!raw)return null;const normalized=normalizeText(raw),refs=[...normalized.matchAll(/\b\d+(?:\s*[\/-]\s*\d+)+\b/g)].map(m=>m[0].replace(/\s+/g,'')),standalone=[...normalized.matchAll(/\b\d{2,}\b/g)].map(m=>m[0]),identificadores=[...new Set([...refs.flatMap(v=>v.split(/[\/-]/)),...standalone])],nome=raw.replace(/\b\d+(?:\s*[\/-]\s*\d+)+\b/g,' ').replace(/\b\d{2,}\b/g,' ').replace(/\s+/g,' ').trim();return{nome:nome||raw,referenciaOriginal:raw,identificadores}}
+function interpretConversation(chat,messages){const textMessages=messages.filter(m=>m.text),customerMessages=textMessages.filter(m=>!m.fromMe),order=extractLastOrderFromMessages(messages),identity=chatDisplayName(chat),identityReference=extractIdentityReference(identity);return{jid:canonicalJid(chat.id),nomeWhatsApp:identity,cadastro:null,enderecoCadastro:null,referenciaWhatsApp:identityReference,identificacaoStatus:identityReference?'referencia_encontrada_no_whatsapp':'cadastro_nao_consultado',pedido:order,pedidoStatus:order.length?'identificado':'nao_identificado',precisaConferencia:!order.length||!identityReference,contextoMensagens:textMessages.length,ultimaMensagemCliente:customerMessages.at(-1)?.text||null}}
+app.get('/api/pedidos/interpretar',(_req,res)=>{const active=canonicalChats().filter(c=>!isArchived(c)).sort((a,b)=>Number(b.conversationTimestamp||0)-Number(a.conversationTimestamp||0));const resultados=active.map(chat=>{const messages=(messagesByChat.get(canonicalJid(chat.id))||[]).sort((a,b)=>Number(a.messageTimestamp||0)-Number(b.messageTimestamp||0)).slice(-10).map(toPublicMessage);return interpretConversation(chat,messages)});res.json({regra:'somente conversas desarquivadas; últimas 10 mensagens da conversa inteira, incluindo cliente e empresa; identificação do pedido usa apenas as mensagens do cliente',totalConversas:resultados.length,resultados})})
+app.get('/api/chats/stats',(_req,res)=>{const all=canonicalChats(),active=all.filter(c=>!isArchived(c)),archived=all.filter(c=>isArchived(c));res.json({total:all.length,active:active.length,archived:archived.length,capturedAt:new Date().toISOString()})})
 app.get('/health',(_req,res)=>res.json({ok:true,connection,chats:canonicalChats().length}))
-app.listen(port,()=>{ startWhatsApp().catch(err=>logger.error(err)); console.log('Servidor do coletor rodando na porta '+port) })
+app.listen(port,()=>{startWhatsApp().catch(err=>logger.error(err));console.log('Servidor do coletor rodando na porta '+port)})
