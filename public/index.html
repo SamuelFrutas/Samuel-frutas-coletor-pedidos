@@ -3,121 +3,79 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Teste — Conversas ativas</title>
+<title>Samuel Frutas — Coletor de pedidos</title>
 <style>
-body{font-family:Arial,sans-serif;background:#111;color:#eee;margin:0;padding:24px}
-main{max-width:800px;margin:auto}
-button{padding:12px 16px;border:0;border-radius:8px;cursor:pointer}
+body{font-family:Arial,sans-serif;background:#111;color:#eee;margin:0;padding:18px}
+main{max-width:850px;margin:auto}
+button{padding:11px 15px;border:0;border-radius:8px;cursor:pointer;font-weight:600}
+button:disabled{opacity:.55;cursor:wait}
 .card{background:#1d1d1d;border:1px solid #333;border-radius:12px;padding:16px;margin:10px 0}
-.stats{display:flex;gap:10px;flex-wrap:wrap;margin:20px 0}
-.stat{background:#1d1d1d;border:1px solid #333;border-radius:10px;padding:14px;min-width:130px}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}
+.stat{background:#1d1d1d;border:1px solid #333;border-radius:10px;padding:13px;min-width:125px}
 .muted{color:#aaa}
+.order{position:relative}
+.copy{float:right}
+.order ul{margin:12px 0 0 0;padding-left:22px}
+.error{border-color:#733;background:#241616}
+.success{border-color:#365f3d}
 </style>
 </head>
 <body>
 <main>
-<h1>Etapa 4 — Coleta dos pedidos</h1>
-<p class="muted">Ao processar, o sistema mostra somente o <b>último pedido</b> de cada conversa desarquivada. Conversas arquivadas ficam fora.</p>
+<h1>Coletor de pedidos</h1>
+<p class="muted">O sistema pega as <b>10 últimas mensagens da conversa inteira</b> (cliente + empresa), envia esse contexto para a IA e monta somente o último pedido. Conversas arquivadas ficam fora.</p>
+<div>
 <button onclick="refresh()">Atualizar</button>
-<button onclick="coletarPedidos()" style="margin-left:8px">Processar últimos pedidos</button><div id="wa" class="card" style="margin-top:16px">Verificando WhatsApp...</div>
+<button onclick="coletarPedidos()" id="processar" style="margin-left:8px">Processar pedidos com IA</button>
+</div>
+<div id="wa" class="card" style="margin-top:16px">Verificando WhatsApp...</div>
 <div id="stats" class="stats"></div>
 <h2>Conversas desarquivadas</h2>
 <div id="list">Carregando...</div>
-<h2>Últimos pedidos</h2>
-<div id="coleta" class="card muted">Aguardando coleta...</div>
+<h2>Pedidos</h2>
+<div id="pedidos" class="card muted">Clique em <b>Processar pedidos com IA</b>.</div>
 <script>
+function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+function nomeSeguro(v){return String(v||'Nome não identificado').trim()}
 async function conectarWhatsApp(){
-  const box=document.getElementById('wa')
-  box.innerHTML='<b>Iniciando conexão...</b><br><span class="muted">Aguarde o QR Code aparecer.</span>'
-  await fetch('/api/whatsapp/connect',{method:'POST'})
-  setTimeout(refresh,1500)
+ const box=document.getElementById('wa');box.innerHTML='<b>Iniciando conexão...</b><br><span class="muted">Aguarde o QR Code aparecer.</span>'
+ try{await fetch('/api/whatsapp/connect',{method:'POST'});setTimeout(refresh,1500)}catch(error){box.innerHTML='<b>Erro ao iniciar conexão</b><br>'+esc(error?.message||String(error))}
 }
 async function refresh(){
-  const box=document.getElementById('wa')
-  try {
+ const box=document.getElementById('wa')
+ try{
   const wa=await fetch('/api/whatsapp/status',{cache:'no-store'}).then(r=>r.json())
-  if(wa.connected) box.innerHTML='<b>WhatsApp conectado</b><br><span class="muted">A sessão está ativa. Não é necessário escanear QR novamente.</span>'
-  else if(wa.qrPending) {
-    const q=await fetch('/api/whatsapp/qr').then(r=>r.json())
-    box.innerHTML='<b>WhatsApp aguardando conexão</b><br><span class="muted">Abra o WhatsApp → Dispositivos conectados → Conectar dispositivo e escaneie o QR abaixo.</span><br><img src="'+q.dataUrl+'" width="320" alt="QR Code do WhatsApp" style="margin-top:12px;background:#fff;padding:8px;border-radius:8px">'
-  } else box.innerHTML='<b>WhatsApp: '+esc(wa.connection)+'</b><br><span class="muted">Clique para iniciar a conexão e gerar o QR.</span><br><button onclick="conectarWhatsApp()" style="margin-top:10px">Conectar WhatsApp</button>'
-
-  const [s,c]=await Promise.all([fetch('/api/status').then(r=>r.json()),fetch('/api/chats').then(r=>r.json())])
-  document.getElementById('stats').innerHTML =
-    '<div class="stat">Conexão<br><b>'+s.connection+'</b></div>'+
-    '<div class="stat">Total<br><b>'+s.totalChats+'</b></div>'+
-    '<div class="stat">Desarquivadas<br><b>'+s.activeChats+'</b></div>'+
-    '<div class="stat">Arquivadas<br><b>'+s.archivedChats+'</b></div>'
-  document.getElementById('list').innerHTML=c.length
-    ? c.map((x,i)=>'<div class="card"><b>'+(i+1)+'. '+esc(x.name)+'</b><br><span class="muted">'+esc(x.jid)+'</span><br>Não lidas: <b>'+x.unreadCount+'</b><br>Estado: <b>DESARQUIVADA</b><br><button onclick="loadMessages('+JSON.stringify(x.jid)+')" style="margin-top:10px">Ver mensagens</button><div id="msg-'+esc(x.jid).replace(/[^a-zA-Z0-9]/g,'_')+'" class="muted" style="margin-top:10px"></div></div>').join('')
-    : '<p>Nenhuma conversa desarquivada recebida ainda.</p>'
-  } catch (error) {
-    box.innerHTML='<b>Erro ao consultar o WhatsApp</b><br><span class="muted">'+esc(error?.message||String(error))+'</span><br><button onclick="refresh()" style="margin-top:10px">Tentar novamente</button>'
-  }
+  if(wa.connected) box.innerHTML='<b>WhatsApp conectado</b><br><span class="muted">Sessão ativa.</span>'
+  else if(wa.qrPending){const q=await fetch('/api/whatsapp/qr').then(r=>r.json());box.innerHTML='<b>WhatsApp aguardando conexão</b><br><span class="muted">Escaneie o QR Code.</span><br><img src="'+q.dataUrl+'" width="320" alt="QR Code" style="margin-top:12px;background:#fff;padding:8px;border-radius:8px">'}
+  else box.innerHTML='<b>WhatsApp: '+esc(wa.connection)+'</b><br><span class="muted">Clique para iniciar a conexão.</span><br><button onclick="conectarWhatsApp()" style="margin-top:10px">Conectar WhatsApp</button>'
+  const [s,c]=await Promise.all([fetch('/api/status',{cache:'no-store'}).then(r=>r.json()),fetch('/api/chats',{cache:'no-store'}).then(r=>r.json())])
+  document.getElementById('stats').innerHTML='<div class="stat">Conexão<br><b>'+esc(s.connection)+'</b></div><div class="stat">Total<br><b>'+s.totalChats+'</b></div><div class="stat">Desarquivadas<br><b>'+s.activeChats+'</b></div><div class="stat">Arquivadas<br><b>'+s.archivedChats+'</b></div>'
+  document.getElementById('list').innerHTML=c.length?c.map((x,i)=>'<div class="card"><b>'+(i+1)+'. '+esc(x.name)+'</b><br><span class="muted">'+esc(x.jid)+'</span><br>Estado: <b>DESARQUIVADA</b><br><button onclick="loadMessages('+JSON.stringify(x.jid)+')" style="margin-top:10px">Ver últimas 10 mensagens</button><div id="msg-'+esc(x.jid).replace(/[^a-zA-Z0-9]/g,'_')+'" class="muted" style="margin-top:10px"></div></div>').join(''):'<p>Nenhuma conversa desarquivada recebida ainda.</p>'
+ }catch(error){box.innerHTML='<b>Erro ao consultar o WhatsApp</b><br><span class="muted">'+esc(error?.message||String(error))+'</span><br><button onclick="refresh()" style="margin-top:10px">Tentar novamente</button>'}
 }
+function formatOrder(x){const nome=nomeSeguro(x.nomeWhatsApp);if(!Array.isArray(x.pedido)||!x.pedido.length)return nome+' não tem pedido.';return nome+'\n'+x.pedido.map(p=>{const q=Number.isInteger(p.quantidade)?p.quantidade:String(p.quantidade).replace('.',',');return '• '+q+(p.unidade?' '+p.unidade:'')+' de '+p.produto}).join('\n')}
+async function copiarPedido(index){const item=window.__pedidos?.[index];if(!item)return;const texto=formatOrder(item);try{await navigator.clipboard.writeText(texto);const btn=document.getElementById('copy-'+index);if(btn){btn.textContent='Copiado ✓';setTimeout(()=>btn.textContent='Copiar',1500)}}catch{window.prompt('Copie o pedido:',texto)}}
 async function coletarPedidos(){
-  const box=document.getElementById('coleta')
-  const button=document.querySelector('button[onclick="coletarPedidos()"]')
-  if(button) button.disabled=true
-  box.textContent='Processando o último pedido de cada conversa desarquivada...'
-
-  try {
-    const r=await fetch('/api/pedidos/interpretar',{cache:'no-store'})
-    const data=await r.json().catch(()=>({}))
-    if(!r.ok){
-      box.textContent=data.error||'Erro ao processar os pedidos.'
-      return
-    }
-
-    box.innerHTML = data.resultados.length
-      ? data.resultados.map(x=>{
-          const nome=esc(x.nomeWhatsApp||'Nome não identificado')
-          if(!x.pedido.length){
-            return '<div class="card"><b>'+nome+' não tem pedido.</b></div>'
-          }
-
-          const itens=x.pedido.map(p=>{
-            const quantidade=Number.isInteger(p.quantidade)?p.quantidade:String(p.quantidade).replace('.',',')
-            const unidade=esc(p.unidade||'')
-            return '<li>'+esc(quantidade)+(unidade?' '+unidade:'')+' de '+esc(p.produto)+'</li>'
-          }).join('')
-
-          return '<div class="card"><b>'+nome+'</b><ul>'+itens+'</ul></div>'
-        }).join('')
-      : 'Nenhuma conversa desarquivada para processar.'
-  } catch(error) {
-    box.textContent='Erro ao processar: '+(error?.message||String(error))
-  } finally {
-    if(button) button.disabled=false
-  }
+ const box=document.getElementById('pedidos'),button=document.getElementById('processar');button.disabled=true;box.innerHTML='<div class="muted">Pegando as 10 últimas mensagens de cada conversa e enviando para a IA...</div>'
+ try{
+  const r=await fetch('/api/pedidos/interpretar',{cache:'no-store'}),data=await r.json().catch(()=>({}))
+  if(!r.ok)throw new Error(data.error||'Erro ao processar os pedidos.')
+  window.__pedidos=data.resultados||[]
+  if(!window.__pedidos.length){box.innerHTML='<div class="muted">Nenhuma conversa desarquivada para processar.</div>';return}
+  box.className='card'
+  box.innerHTML=window.__pedidos.map((x,i)=>{
+   if(x.pedidoStatus==='erro')return '<div class="card error"><b>'+esc(nomeSeguro(x.nomeWhatsApp))+'</b><br><span class="muted">Erro na IA: '+esc(x.erro||'erro desconhecido')+'</span></div>'
+   if(!x.pedido?.length)return '<div class="card"><b>'+esc(nomeSeguro(x.nomeWhatsApp))+' não tem pedido.</b></div>'
+   const itens=x.pedido.map(p=>{const q=Number.isInteger(p.quantidade)?p.quantidade:String(p.quantidade).replace('.',',');return '<li>'+esc(q)+(p.unidade?' '+esc(p.unidade):'')+' de '+esc(p.produto)+'</li>'}).join('')
+   return '<div class="card order success"><button class="copy" id="copy-'+i+'" onclick="copiarPedido('+i+')">Copiar</button><b>'+esc(nomeSeguro(x.nomeWhatsApp))+'</b><ul>'+itens+'</ul></div>'
+  }).join('')
+ }catch(error){box.className='card error';box.innerHTML='<b>Erro ao processar:</b><br>'+esc(error?.message||String(error))}finally{button.disabled=false}
 }
 async function loadMessages(jid){
-  const target='msg-'+String(jid).replace(/[^a-zA-Z0-9]/g,'_')
-  const box=document.getElementById(target)
-  box.textContent='Carregando mensagens...'
-  const r=await fetch('/api/chats/'+encodeURIComponent(jid)+'/messages')
-  const data=await r.json()
-  if(!r.ok){ box.textContent=data.error||'Erro ao carregar mensagens.'; return }
-  box.innerHTML=data.messages.length
-    ? data.messages.slice(-10).map(m=>'<div style="margin:6px 0;padding:6px;background:#151515;border-radius:6px"><b>'+(m.fromMe?'Você':'Cliente')+':</b> '+esc(m.text||'[mídia]')+'</div>').join('')
-    : 'Nenhuma mensagem de texto capturada.'
+ const target='msg-'+String(jid).replace(/[^a-zA-Z0-9]/g,'_'),box=document.getElementById(target);if(!box)return;box.textContent='Carregando...'
+ try{const r=await fetch('/api/chats/'+encodeURIComponent(jid)+'/messages'),data=await r.json();if(!r.ok){box.textContent=data.error||'Erro ao carregar mensagens.';return}box.innerHTML=data.messages.length?data.messages.slice(-10).map(m=>'<div style="margin:6px 0;padding:7px;background:#151515;border-radius:6px"><b>'+(m.fromMe?'Você':'Cliente')+':</b> '+esc(m.text||'[mídia]')+'</div>').join(''):'Nenhuma mensagem de texto capturada.'}catch(error){box.textContent=error?.message||String(error)}
 }
-function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
-async function interpretarPedidos(){
-  const box=document.getElementById('interpretados')
-  box.textContent='Interpretando somente as 10 últimas mensagens de cada conversa desarquivada...'
-  const r=await fetch('/api/pedidos/interpretar')
-  const data=await r.json()
-  if(!r.ok){ box.textContent=data.error||'Erro na interpretação.'; return }
-  box.innerHTML=data.resultados.length
-    ? data.resultados.map((x,i)=>{
-        const itens=x.pedido.map(p=>'<li>'+esc(p.quantidade)+' '+esc(p.unidade||'unidade não informada')+' — '+esc(p.produto)+'</li>').join('')
-        return '<div style="margin:10px 0;padding:10px;background:#181818;border-radius:8px"><b>'+(i+1)+'. '+esc(x.nomeWhatsApp||'Nome não identificado')+'</b><br><span class="muted">'+esc(x.jid)+'</span><br>Identificação: <b>'+esc(x.identificacaoStatus)+'</b><br>Pedido: <b>'+esc(x.pedidoStatus)+'</b><ul>'+ (itens||'<li>Nenhum item identificado com segurança.</li>') +'</ul><span class="muted">Identificação usa o nome exato disponível no WhatsApp; endereço oficial só será confirmado quando houver uma base de clientes conectada. Nada é enviado.</span></div>'
-      }).join('')
-    : 'Nenhuma conversa desarquivada para interpretar.'
-}
-refresh()
-setInterval(refresh,5000)
+refresh();setInterval(refresh,5000)
 </script>
 </main>
 </body>
