@@ -53,6 +53,44 @@ async function refresh(){
   document.getElementById('list').innerHTML=c.length?c.map((x,i)=>'<div class="card"><b>'+(i+1)+'. '+esc(x.name)+'</b><br><span class="muted">'+esc(x.jid)+'</span><br>Estado: <b>DESARQUIVADA</b><br><button onclick="loadMessages('+JSON.stringify(x.jid)+')" style="margin-top:10px">Ver últimas 10 mensagens</button><div id="msg-'+esc(x.jid).replace(/[^a-zA-Z0-9]/g,'_')+'" class="muted" style="margin-top:10px"></div></div>').join(''):'<p>Nenhuma conversa desarquivada recebida ainda.</p>'
  }catch(error){box.innerHTML='<b>Erro ao consultar o WhatsApp</b><br><span class="muted">'+esc(error?.message||String(error))+'</span><br><button onclick="refresh()" style="margin-top:10px">Tentar novamente</button>'}
 }
+
+const PRODUTOS_FALLBACK=[
+ ['mamão papaya','mamão','mamao'],['banana'],['tangerina','mexerica','mixiriquinha'],['abacaxi'],['manga palmer','manga'],['maçã','maca'],['morango'],['melancia'],['tâmara','tamara'],['uva preta'],['uva verde'],['kiwi'],['caju'],['mel'],['coco'],['melão','melao'],['fruta do conde'],['laranja pera','laranja'],['abacate'],['ovos caipira','ovos'],['goiaba vermelha','goiaba'],['pera macia','pera'],['limão','limao']
+]
+const UNIDADES_FALLBACK={cx:'Cx',caixa:'Cx',caixas:'Cx',tl:'Tl',tal:'Tl',talo:'Tl',talos:'Tl',un:'Un',unidade:'Un',unidades:'Un',sc:'Sc',saco:'Sc',sacos:'Sc',dz:'DZ',duzia:'DZ',bdj:'BDJ',bandeja:'BDJ',pote:'Pote',gf:'Gf',garrafa:'Gf',pc:'Pc',pacote:'Pc'}
+function normalizarFallback(s){return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')}
+function extrairPedidoLocal(mensagens){
+ const lista=(mensagens||[]).filter(m=>m?.text).slice().sort((a,b)=>Number(a.timestamp||0)-Number(b.timestamp||0))
+ const clientes=lista.filter(m=>!m.fromMe)
+ const fontes=clientes.length?clientes:lista
+ let escolhidas=[]
+ for(let i=fontes.length-1;i>=0;i--){
+  const texto=String(fontes[i].text||'')
+  const encontrados=[]
+  const n=normalizarFallback(texto)
+  for(const aliases of PRODUTOS_FALLBACK){
+   for(const alias of aliases){
+    const an=normalizarFallback(alias)
+    const pos=n.indexOf(an)
+    if(pos<0)continue
+    const antes=n.slice(Math.max(0,pos-35),pos)
+    const depois=n.slice(pos+an.length,pos+an.length+35)
+    const numAntes=antes.match(/(\d+(?:[,.]\d+)?)\s*(cx|caixas?|tl|talos?|un(?:idades?)?|sc|sacos?|dz|duzia|bdj|bandeja|pote|gf|garrafa|pc|pacote)?\s*$/)
+    const numDepois=depois.match(/^\s*[:=-]?\s*(\d+(?:[,.]\d+)?)\s*(cx|caixas?|tl|talos?|un(?:idades?)?|sc|sacos?|dz|duzia|bdj|bandeja|pote|gf|garrafa|pc|pacote)?/)
+    const match=numAntes||numDepois
+    if(!match)continue
+    const quantidade=Number(String(match[1]).replace(',','.'))
+    if(!Number.isFinite(quantidade)||quantidade<=0)continue
+    const unidade=UNIDADES_FALLBACK[String(match[2]||'').toLowerCase()]||null
+    encontrados.push({produto:aliases[0],quantidade,unidade})
+    break
+   }
+  }
+  if(encontrados.length){escolhidas=encontrados;break}
+ }
+ const vistos=new Set()
+ return escolhidas.filter(x=>{const k=normalizarFallback(x.produto);if(vistos.has(k))return false;vistos.add(k);return true})
+}
 function formatOrder(x){const nome=nomeSeguro(x.nomeWhatsApp);if(!Array.isArray(x.pedido)||!x.pedido.length)return nome+' não tem pedido.';return nome+'\n'+x.pedido.map(p=>{const q=Number.isInteger(p.quantidade)?p.quantidade:String(p.quantidade).replace('.',',');return '• '+q+(p.unidade?' '+p.unidade:'')+' de '+p.produto}).join('\n')}
 async function copiarPedido(index){const item=window.__pedidos?.[index];if(!item)return;const texto=formatOrder(item);try{await navigator.clipboard.writeText(texto);const btn=document.getElementById('copy-'+index);if(btn){btn.textContent='Copiado ✓';setTimeout(()=>btn.textContent='Copiar',1500)}}catch{window.prompt('Copie o pedido:',texto)}}
 async function coletarPedidos(){
@@ -60,7 +98,13 @@ async function coletarPedidos(){
  try{
   const r=await fetch('/api/pedidos/interpretar',{cache:'no-store'}),data=await r.json().catch(()=>({}))
   if(!r.ok)throw new Error(data.error||'Erro ao processar os pedidos.')
-  window.__pedidos=data.resultados||[]
+  window.__pedidos=(data.resultados||[]).map(x=>{
+   if((x.pedidoStatus==='nao_identificado'||!x.pedido?.length)&&Array.isArray(x.mensagensContexto)){
+    const fallback=extrairPedidoLocal(x.mensagensContexto)
+    if(fallback.length)return {...x,pedido:fallback,pedidoStatus:'identificado_fallback'}
+   }
+   return x
+  })
   if(!window.__pedidos.length){box.innerHTML='<div class="muted">Nenhuma conversa desarquivada para processar.</div>';return}
   box.className='card'
   box.innerHTML=window.__pedidos.map((x,i)=>{
